@@ -1,0 +1,23 @@
+# Generated HTML reports
+DefenderXDR-RBAC-Audit_*.html
+
+# PowerShell
+*.ps1xml
+*.psm1
+*.psd1
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Temp
+*.tmp
+*.log
+*.bak
