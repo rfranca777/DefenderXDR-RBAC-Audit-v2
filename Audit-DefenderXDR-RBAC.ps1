@@ -23,7 +23,7 @@ param(
     [int]$DaysBack = 30
 )
 $ErrorActionPreference = "Stop"
-$scriptVersion = "2.0.0"
+$scriptVersion = "2.1.0"
 
 # =====================================================================
 # FUNCOES AUXILIARES
@@ -454,28 +454,43 @@ foreach ($role in $dR.value) {
     }
 }
 
-# -- Tabela S2: Matriz de Permissoes
+# -- Tabela S2: Matriz de Permissoes (visual rica)
 $tblPermMatrix = ""
 foreach ($pm in $permMatrix) {
     $tblPermMatrix += "<tr><td style='color:#3fb950;font-weight:600'>$($pm.RoleName)</td>"
     foreach ($cat in $permCatDefs) {
         $lvl = $pm.Cats[$cat.Key]
-        $cellStyle = if ($lvl -eq "manage") { "background:#f8514920;color:#f85149;font-weight:600" } elseif ($lvl -eq "read") { "background:#3fb95020;color:#3fb950" } else { "color:#30363d" }
-        $cellIcon = if ($lvl -eq "manage") { "&#x1F534; MANAGE" } elseif ($lvl -eq "read") { "&#x1F7E2; READ" } else { "---" }
-        $tblPermMatrix += "<td style='$cellStyle;text-align:center;font-size:10px'>$cellIcon</td>"
+        $cellStyle = if ($lvl -eq "manage") { "background:linear-gradient(135deg,#f8514930,#f8514910);color:#f85149;font-weight:700;border:1px solid #f8514940" } elseif ($lvl -eq "read") { "background:linear-gradient(135deg,#3fb95030,#3fb95010);color:#3fb950;font-weight:600;border:1px solid #3fb95040" } else { "color:#30363d" }
+        $cellIcon = if ($lvl -eq "manage") { "<div style='font-size:14px'>&#x1F534;</div><div style='font-size:9px;margin-top:2px'>MANAGE</div>" } elseif ($lvl -eq "read") { "<div style='font-size:14px'>&#x1F7E2;</div><div style='font-size:9px;margin-top:2px'>READ</div>" } else { "<div style='color:#30363d'>---</div>" }
+        $tblPermMatrix += "<td style='$cellStyle;text-align:center;padding:10px 8px;border-radius:6px'>$cellIcon</td>"
     }
     $tblPermMatrix += "</tr>`n"
 }
 
-# -- Tabela S3: Risk Analysis
+# -- Tabela S3: Risk Analysis (com barras visuais)
 $tblRisk = ""
 foreach ($entry in ($riskByPrincipal.GetEnumerator() | Sort-Object { $_.Value.Score } -Descending)) {
     $r = $entry.Value
     $rolesUnique = ($r.Roles | Select-Object -Unique) -join ", "
     $riskBadge = "<span class='badge' style='background:$($r.Color)22;color:$($r.Color)'>$($r.Icon) $($r.Level)</span>"
     $pathsBadge = if ($r.Paths -gt 2) { "<span class='badge' style='background:#d2992233;color:#d29922'>$($r.Paths) caminhos</span>" } else { "$($r.Paths)" }
-    $tblRisk += "<tr><td><b>$($entry.Key)</b></td><td>$riskBadge</td><td style='text-align:center'>$($r.Score)</td><td style='text-align:center'>$pathsBadge</td><td class='sm'>$rolesUnique</td></tr>`n"
+    $scoreBar = "<div style='display:flex;align-items:center;gap:6px'><div style='width:$($r.Score)px;height:8px;background:$($r.Color);border-radius:4px;opacity:.7'></div><span style='color:$($r.Color);font-weight:700;font-size:12px'>$($r.Score)</span></div>"
+    $tblRisk += "<tr style='border-left:3px solid $($r.Color)'><td><b>$($entry.Key)</b></td><td>$riskBadge</td><td>$scoreBar</td><td style='text-align:center'>$pathsBadge</td><td class='sm'>$rolesUnique</td></tr>`n"
 }
+
+# -- SVG: Risk Gauge (distribuicao visual)
+$riskTotal = [Math]::Max($riskByPrincipal.Count, 1)
+$critPct = [Math]::Round(($critCount / $riskTotal) * 300)
+$highPct = [Math]::Round(($highCount / $riskTotal) * 300)
+$medPct = [Math]::Round(($medCount / $riskTotal) * 300)
+$lowPct = [Math]::Round(($lowCount / $riskTotal) * 300)
+$svgRisk = "<rect x='0' y='0' width='300' height='24' rx='12' fill='#161b22' stroke='#30363d' stroke-width='1'/>"
+$rx = 0
+if ($critPct -gt 0) { $svgRisk += "<rect x='$rx' y='0' width='$critPct' height='24' rx='$(if($rx -eq 0){12}else{0})' fill='#f85149' opacity='.85'><title>CRITICAL: $critCount</title></rect>"; $rx += $critPct }
+if ($highPct -gt 0) { $svgRisk += "<rect x='$rx' y='0' width='$highPct' height='24' fill='#ff7b72' opacity='.85'><title>HIGH: $highCount</title></rect>"; $rx += $highPct }
+if ($medPct -gt 0) { $svgRisk += "<rect x='$rx' y='0' width='$medPct' height='24' fill='#d29922' opacity='.85'><title>MEDIUM: $medCount</title></rect>"; $rx += $medPct }
+if ($lowPct -gt 0) { $svgRisk += "<rect x='$rx' y='0' width='$lowPct' height='24' fill='#3fb950' opacity='.85'><title>LOW: $lowCount</title></rect>" }
+$svgRisk += "<text x='150' y='16' fill='white' font-family='Segoe UI' font-size='10' text-anchor='middle' font-weight='700' style='text-shadow:0 1px 2px rgba(0,0,0,.5)'>$critCount CRITICAL / $highCount HIGH / $medCount MED / $lowCount LOW</text>"
 
 # -- Tabela S4: Evidencias RBAC
 $tblEvidence = ""
@@ -707,10 +722,16 @@ body{font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,sans-serif;backgrou
 .hd .mt span,.hd .mt a{background:#21262d;padding:4px 12px;border-radius:6px;border:1px solid #30363d;color:#8b949e;text-decoration:none;transition:all .2s}
 .hd .mt a:hover{color:#58a6ff;border-color:#58a6ff;background:#161b22}
 .cds{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}
-.cd{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px;text-align:center;transition:all .2s}
-.cd:hover{transform:translateY(-2px);border-color:#58a6ff33}
-.cd .n{font-size:30px;font-weight:700}.cd .l{color:#8b949e;font-size:10px;margin-top:3px;line-height:1.4}
-.cd.c1 .n{color:#58a6ff}.cd.c2 .n{color:#3fb950}.cd.c3 .n{color:#d29922}.cd.c4 .n{color:#f85149}.cd.c5 .n{color:#ce93d8}.cd.c6 .n{color:#ff7b72}
+.cd{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px;text-align:center;transition:all .2s;position:relative;overflow:hidden}
+.cd::before{content:'';position:absolute;top:0;left:0;width:4px;height:100%;border-radius:10px 0 0 10px}
+.cd:hover{transform:translateY(-3px);box-shadow:0 4px 12px rgba(0,0,0,.3)}
+.cd .n{font-size:32px;font-weight:800}.cd .l{color:#8b949e;font-size:10px;margin-top:3px;line-height:1.4}
+.cd.c1 .n{color:#58a6ff}.cd.c1::before{background:#58a6ff}
+.cd.c2 .n{color:#3fb950}.cd.c2::before{background:#3fb950}
+.cd.c3 .n{color:#d29922}.cd.c3::before{background:#d29922}
+.cd.c4 .n{color:#f85149}.cd.c4::before{background:#f85149}
+.cd.c5 .n{color:#ce93d8}.cd.c5::before{background:#ce93d8}
+.cd.c6 .n{color:#ff7b72}.cd.c6::before{background:#ff7b72}
 .sc{background:#161b22;border:1px solid #30363d;border-radius:10px;margin-bottom:20px;overflow:hidden}
 .st{background:#21262d;padding:12px 18px;font-size:14px;font-weight:600;color:#58a6ff;border-bottom:1px solid #30363d;display:flex;justify-content:space-between;align-items:center}
 .st a{font-size:10px;color:#6e7681;text-decoration:none;background:#161b22;padding:3px 10px;border-radius:5px;border:1px solid #30363d;transition:all .2s}
@@ -766,57 +787,42 @@ tr:hover{background:#1c2128}
 
 <!-- S1: RBAC CUSTOM ROLES -->
 <div class="sc"><div class="st" style="background:#1a2e1a">&#x1F512; 1. RBAC do Defender XDR -- Custom Roles e Assignments<a href="$($portal.Perms)" target="_blank">Permissions &#x2192;</a></div><div class="sb">
-<div class="rt" style="border-left-color:#3fb950"><b>FOCO PRINCIPAL:</b> Custom roles configuradas no <b>Unified RBAC</b> do Defender XDR (<code>security.microsoft.com &gt; Permissions &gt; Roles</code>). Cada role define permissoes granulares em 4 categorias: <code>Security Operations</code> (SOC), <code>Security Posture</code> (vuln mgmt), <code>Authorization &amp; Settings</code> (config), <code>Data Operations</code> (Sentinel data lake). As roles sao atribuidas a <b>grupos de seguranca</b> do Entra ID -- qualquer membro herda as permissoes.<br><br>
-<b>Achados:</b> <b>$($dR.value.Count)</b> custom role(s), <b>$($dGrp.Count)</b> grupo(s), <b>$tRB</b> assignment(s) ativo(s).<br>
-&#x1F517; <a href="$($portal.Perms)" target="_blank">Abrir Permissions</a> | &#x1F4D6; <a href="https://learn.microsoft.com/defender-xdr/create-custom-rbac-roles" target="_blank">Docs: Custom RBAC Roles</a> | <a href="https://learn.microsoft.com/defender-xdr/custom-permissions-details" target="_blank">Docs: Permission Details</a></div>
+<div class="rt" style="border-left-color:#3fb950;padding:8px 14px"><b>$($dR.value.Count)</b> custom role(s), <b>$($dGrp.Count)</b> grupo(s), <b>$tRB</b> assignment(s). Roles atribuidas a grupos Entra ID -- membros herdam permissoes. &#x1F517; <a href="$($portal.Perms)" target="_blank">Portal</a> | <a href="https://learn.microsoft.com/defender-xdr/custom-permissions-details" target="_blank">Docs</a></div>
 <div style="overflow-x:auto"><table style="min-width:950px"><thead><tr><th style="min-width:140px">Custom Role</th><th style="min-width:220px">Permissoes</th><th style="min-width:200px">Atribuida a</th><th style="min-width:150px">Escopo</th><th style="min-width:220px">Membros (acesso efetivo)</th></tr></thead><tbody>
 $tblRbac
 </tbody></table></div></div></div>
 
 <!-- S2: PERMISSION CATEGORIES MATRIX -->
 <div class="sc"><div class="st">&#x1F4CB; 2. Matriz de Permissoes por Categoria RBAC<a href="https://learn.microsoft.com/defender-xdr/custom-permissions-details" target="_blank">Docs &#x2192;</a></div><div class="sb">
-<div class="rt"><b>Categorias do Unified RBAC:</b> O Defender XDR organiza permissoes em <b>4 categorias</b>. Cada custom role pode ter niveis diferentes por categoria: <span style="color:#f85149">&#x1F534; MANAGE</span> (leitura + escrita + acoes) ou <span style="color:#3fb950">&#x1F7E2; READ</span> (somente leitura). A matriz abaixo mostra o nivel de cada role por categoria.<br><br>
-<b>Categorias:</b><br>
-&#x1F6E1;&#xFE0F; <b>Security Operations</b>: Incidents, alerts, response actions, live response, hunting, email quarantine<br>
-&#x1F4CA; <b>Security Posture</b>: Vulnerability management, baselines, Secure Score, exposure management<br>
-&#x2699;&#xFE0F; <b>Authorization &amp; Settings</b>: Role management, system settings, detection tuning<br>
-&#x1F4BE; <b>Data Operations</b>: Data retention, Sentinel data lake, analytics jobs (Preview)</div>
+<div class="rt" style="padding:8px 14px"><span style="color:#f85149">&#x1F534; MANAGE</span> = leitura + escrita + acoes | <span style="color:#3fb950">&#x1F7E2; READ</span> = somente leitura. 4 categorias: SecOps, Posture, Auth/Settings, DataOps.</div>
 <div style="overflow-x:auto"><table style="min-width:700px"><thead><tr><th style="min-width:160px">Custom Role</th><th style="min-width:120px;text-align:center">&#x1F6E1;&#xFE0F; Security Ops</th><th style="min-width:120px;text-align:center">&#x1F4CA; Sec. Posture</th><th style="min-width:120px;text-align:center">&#x2699;&#xFE0F; Auth/Settings</th><th style="min-width:120px;text-align:center">&#x1F4BE; Data Ops</th></tr></thead><tbody>
 $tblPermMatrix
 </tbody></table></div></div></div>
 
 <!-- S3: RISK ANALYSIS -->
 <div class="sc"><div class="st">&#x26A0;&#xFE0F; 3. Analise de Risco por Principal</div><div class="sb">
-<div class="rt"><b>Classificacao de risco:</b> Cada principal recebe um nivel baseado na <b>role de maior privilegio</b> que possui. Multiplos caminhos de acesso aumentam a complexidade de revogacao. Principals com score alto devem ser priorizados em access reviews.<br><br>
-<span style="color:#f85149">&#x1F534; CRITICAL (80-100)</span>: Global/Security Administrator -- acesso total irrestrito<br>
-<span style="color:#ff7b72">&#x1F7E0; HIGH (60-79)</span>: Security Operator ou RBAC com manage em secops<br>
-<span style="color:#d29922">&#x1F7E1; MEDIUM (40-59)</span>: RBAC com manage em posture/config<br>
-<span style="color:#3fb950">&#x1F7E2; LOW (10-39)</span>: Read-only, Security Reader, Global Reader</div>
+<svg viewBox="0 0 300 24" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:800px;height:28px;margin-bottom:12px">$svgRisk</svg>
+<div class="rt" style="padding:8px 14px">Score por <b>maior privilegio</b>. <span style="color:#f85149">&#x1F534; CRITICAL</span> Global/Sec Admin | <span style="color:#ff7b72">&#x1F7E0; HIGH</span> Operator/SecOps manage | <span style="color:#d29922">&#x1F7E1; MEDIUM</span> Posture/Config | <span style="color:#3fb950">&#x1F7E2; LOW</span> Read-only</div>
 <div style="overflow-x:auto"><table style="min-width:750px"><thead><tr><th style="min-width:180px">Principal</th><th style="min-width:120px">Nivel de Risco</th><th style="min-width:60px;text-align:center">Score</th><th style="min-width:80px;text-align:center">Caminhos</th><th style="min-width:250px">Roles/RBAC</th></tr></thead><tbody>
 $tblRisk
 </tbody></table></div></div></div>
 
 <!-- S4: EVIDENCE -->
 <div class="sc"><div class="st">&#x1F6A8; 4. Evidencias de Alteracao RBAC<a href="$($portal.Audit)" target="_blank">Audit Log &#x2192;</a></div><div class="sb">
-<div class="rt"><b>Quem alterou o RBAC:</b> Eventos de <b>alto impacto</b> -- atribuicao/remocao de Entra ID Roles, criacao/edicao/exclusao de custom roles RBAC.$(if($dGrp.Count -gt 0){" Inclui alteracoes nos grupos do RBAC: <b>$($dGrp -join ', ')</b>."})<br><br>
-<b>Total:</b> <b>$totalRbacChanges</b> alteracoes. <span style="color:#3fb950">&#x2795; adicao</span> | <span style="color:#f85149">&#x274C; remocao</span> | <span style="color:#d29922">&#x270F;&#xFE0F; edicao</span><br>
-&#x1F517; <a href="$($portal.Audit)" target="_blank">Audit Log</a> | <a href="$($portal.Hunt)" target="_blank">Advanced Hunting</a></div>
+<div class="rt" style="padding:8px 14px"><b>$totalRbacChanges</b> alteracoes. <span style="color:#3fb950">&#x2795; add</span> <span style="color:#f85149">&#x274C; remove</span> <span style="color:#d29922">&#x270F;&#xFE0F; edit</span>$(if($dGrp.Count -gt 0){" | Grupos RBAC: <b>$($dGrp -join ', ')</b>"}) | <a href="$($portal.Audit)" target="_blank">Audit Log</a></div>
 $(if($tblEvidence){"<div style='overflow-x:auto'><table style='min-width:850px'><thead><tr><th style='min-width:130px'>Quando</th><th style='min-width:150px'>Acao</th><th style='min-width:140px'>Quem Fez</th><th style='min-width:150px'>Role</th><th style='min-width:180px'>Alvo</th><th style='min-width:120px'>IP / Pais</th></tr></thead><tbody>$tblEvidence</tbody></table></div>"}else{"<div style='background:#21262d;border-radius:8px;padding:18px;text-align:center'><span style='color:#3fb950;font-size:16px'>&#x2705;</span><br><span style='color:#8b949e'>Nenhuma alteracao RBAC nos ultimos $DaysBack dias -- estabilidade nas permissoes.</span></div>"})
 </div></div>
 
 <!-- S5: ENTRA ID ROLES (complementar) -->
 <div class="sc"><div class="st">&#x1F511; 5. Caminhos de Acesso ao Defender XDR<a href="$($portal.Entra)" target="_blank">Entra ID &#x2192;</a></div><div class="sb">
-<div class="rt"><b>Entra ID Roles + RBAC combinados:</b> O Defender XDR respeita <b>ambas</b> as fontes de acesso. Um usuario com <b>Security Administrator</b> no Entra ID tem acesso total ao portal <b>mesmo sem custom role RBAC</b>. Esta tabela consolida todos os caminhos de acesso, com nivel de risco e link direto ao portal para cada caminho.<br><br>
-<b>Achados:</b> <b>$uniquePrincipals</b> principal(s) com <b>$($accessPaths.Count)</b> caminho(s) de acesso. $nU usuario(s), $nG grupo(s), $nS service principal(s).$(if($nS -gt 2){" &#x26A0;&#xFE0F; <b>$nS SPs com acesso privilegiado</b>."})<br>
-&#x1F517; <a href="$($portal.Entra)" target="_blank">Entra Roles</a> | <a href="$($portal.Perms)" target="_blank">RBAC Permissions</a> | &#x1F4D6; <a href="https://learn.microsoft.com/entra/identity/role-based-access-control/permissions-reference" target="_blank">Ref: Entra Roles</a></div>
+<div class="rt" style="padding:8px 14px"><b>$uniquePrincipals</b> principals, <b>$($accessPaths.Count)</b> caminhos. $nU users, $nG groups, $nS SPs.$(if($nS -gt 2){" &#x26A0;&#xFE0F; <b>$nS SPs privilegiados!</b>"}) Entra Roles + RBAC combinados. <a href="$($portal.Entra)" target="_blank">Entra</a> | <a href="$($portal.Perms)" target="_blank">RBAC</a></div>
 <div style="max-height:500px;overflow:auto"><table style="min-width:850px"><thead><tr><th style="min-width:200px">Principal</th><th style="min-width:110px">Tipo</th><th style="min-width:110px">Risco</th><th style="min-width:200px">Role / RBAC</th><th style="min-width:200px">Caminho</th></tr></thead><tbody>
 $tblAccess
 </tbody></table></div></div></div>
 
 <!-- S6: ARCHITECTURE SVG -->
 <div class="sc"><div class="st">&#x1F5FA;&#xFE0F; 6. Arquitetura de Acesso RBAC<a href="$($portal.Perms)" target="_blank">Portal &#x2192;</a></div><div class="sb">
-<div class="rt"><b>Fluxo de acesso:</b> O Defender XDR (centro) protege 4 workloads (esquerda). O acesso e controlado pelo <b>Unified RBAC</b> -- custom roles e Entra ID Roles (direita). O badge numerico mostra principals atribuidos. Cores indicam risco: <span style="color:#f85149">&#x25CF; vermelho = CRITICAL</span>, <span style="color:#ffa657">&#x25CF; laranja = MEDIUM</span>, <span style="color:#3fb950">&#x25CF; verde = grupo RBAC</span>.<br>
-&#x1F4D6; <a href="https://learn.microsoft.com/defender-xdr/manage-rbac" target="_blank">Ref: Unified RBAC</a></div>
+<div class="rt" style="padding:6px 14px;font-size:10px">Workloads &#x2192; XDR &#x2192; Roles/Grupos. <span style="color:#f85149">&#x25CF;</span> CRITICAL <span style="color:#3fb950">&#x25CF;</span> RBAC Group. Hover para detalhes.</div>
 <svg viewBox="0 0 505 $svgH1" xmlns="http://www.w3.org/2000/svg" style="width:100%;background:#0d1117;border-radius:8px;border:1px solid #21262d">
 <text x='68' y='42' fill='#6e7681' font-family='Segoe UI' font-size='6.5' text-anchor='middle' font-weight='600'>WORKLOADS</text>
 <text x='242' y='42' fill='#58a6ff' font-family='Segoe UI' font-size='6.5' text-anchor='middle' font-weight='600'>PORTAL</text>
@@ -826,7 +832,7 @@ $svg1
 
 <!-- S7: EVENTS -->
 <div class="sc"><div class="st">&#x1F50D; 7. Eventos que Alteram o RBAC ($DaysBack dias)<a href="$($portal.Hunt)" target="_blank">Hunting &#x2192;</a></div><div class="sb">
-<div class="rt"><b>Impacto no RBAC:</b> Cada evento pode afetar o acesso ao Defender XDR. Borda <span style="color:#f85149">&#x25CF; vermelha</span> = alto impacto (role/RBAC direto). Borda <span style="color:#d29922">&#x25CF; amarela</span> = medio (grupo). Investigue: (1) conta administrativa esperada? (2) horario normal? (3) IP conhecido? (4) alinhado com change request?</div>
+<div class="rt" style="padding:6px 14px;font-size:10px">Borda <span style="color:#f85149">&#x25CF;</span> = alto impacto (role/RBAC) | <span style="color:#d29922">&#x25CF;</span> = medio (grupo). Verifique: conta esperada? horario normal? IP conhecido?</div>
 $(if($tblEv){"<div style='max-height:420px;overflow:auto'><table style='min-width:1000px'><thead><tr><th style='min-width:130px'>Timestamp</th><th style='min-width:120px'>Cenario</th><th style='min-width:160px'>Acao</th><th style='min-width:140px'>Quem Fez</th><th style='min-width:220px'>Detalhe</th><th style='min-width:120px'>Alvo</th><th style='min-width:130px'>IP / Pais</th></tr></thead><tbody>$tblEv</tbody></table></div>"}else{"<p style='color:#6e7681'>Nenhum evento nos ultimos $DaysBack dias.</p>"})
 </div></div>
 
@@ -834,24 +840,21 @@ $(if($tblEv){"<div style='max-height:420px;overflow:auto'><table style='min-widt
 <div class="sc"><div class="st">&#x1F4CA; 8. Analise Visual</div><div class="sb">
 <div class="gr">
 <div>
-<h4 style="color:#6e7681;font-size:11px;margin-bottom:4px">Distribuicao por Cenario</h4>
-<div class="rt" style="padding:8px 12px;font-size:10px"><b>Racional:</b> Se o donut mostra predominancia de "1-Role Entra ID", as alteracoes de acesso sao via atribuicao direta de roles -- <b>mais impactante</b> e requer mais controle. Se predomina "2-Grupo", as alteracoes sao via membership -- <b>mais comum</b> mas igualmente critico.</div>
+<h4 style="color:#6e7681;font-size:11px;margin-bottom:8px">&#x1F4CA; Distribuicao por Cenario</h4>
 <svg viewBox="0 0 520 200" xmlns="http://www.w3.org/2000/svg" style="width:100%;background:#0d1117;border-radius:8px;border:1px solid #21262d">$svgD</svg>
 </div>
 <div>
-<h4 style="color:#6e7681;font-size:11px;margin-bottom:4px">Top Atores (quem mais alterou)</h4>
-<div class="rt" style="padding:8px 12px;font-size:10px"><b>Racional:</b> Identifica <b>quem concentra mais alteracoes</b> no RBAC. Um unico ator com >40% pode indicar conta comprometida ou falta de segregacao de funcoes. Valide com o responsavel pela conta.</div>
+<h4 style="color:#6e7681;font-size:11px;margin-bottom:8px">&#x1F464; Top Atores</h4>
 <svg viewBox="0 0 500 $aH" xmlns="http://www.w3.org/2000/svg" style="width:100%;background:#0d1117;border-radius:8px;border:1px solid #21262d">$svgA</svg>
 </div>
 </div>
-<h4 style="color:#6e7681;font-size:11px;margin:16px 0 4px">Timeline de Eventos</h4>
-<div class="rt" style="padding:8px 12px;font-size:10px"><b>Racional:</b> Picos na timeline indicam <b>dias com volume anomalo</b> de alteracoes RBAC. Correlacione com janelas de manutencao, onboarding de equipe ou incidentes. Barras vermelhas = volume > 70% do maximo.</div>
+<h4 style="color:#6e7681;font-size:11px;margin:14px 0 8px">&#x1F4C8; Timeline ($DaysBack dias)</h4>
 <svg viewBox="0 0 780 210" xmlns="http://www.w3.org/2000/svg" style="width:100%;background:#0d1117;border-radius:8px;border:1px solid #21262d">$svgT</svg>
 </div></div>
 
 <!-- S9: DETECTION RULE -->
 <div class="sc"><div class="st">&#x1F6A8; 9. Detection Rule -- Monitoramento Continuo do RBAC</div><div class="sb">
-<div class="rt"><b>Proteger o RBAC do XDR:</b> A query abaixo cria um <b>alerta automatico</b> que dispara sempre que alguem alterar o RBAC do Defender XDR. O SOC recebe um incidente na fila do Defender.$(if($dGrp.Count -gt 0){" Filtro de grupos RBAC: <b>$($dGrp -join ', ')</b>."})</div>
+<div class="rt" style="padding:8px 14px">Query para <b>alerta automatico</b> no SOC.$(if($dGrp.Count -gt 0){" Grupos: <b>$($dGrp -join ', ')</b>."}) Crie a Detection Rule abaixo.</div>
 <div class="ins"><h3>Passo a passo -- Detection Rule</h3><ol>
 <li>Abrir <a href="$($portal.Hunt)" target="_blank" style="color:#58a6ff">Advanced Hunting</a></li>
 <li>Copiar a query abaixo e colar no editor</li>
@@ -871,14 +874,14 @@ $(if($tblEv){"<div style='max-height:420px;overflow:auto'><table style='min-widt
 
 <!-- S10: RECOMMENDATIONS -->
 <div class="sc"><div class="st">&#x1F4DD; 10. Recomendacoes (CIS / NIST / Microsoft PAR)</div><div class="sb">
-<div class="rt"><b>Recomendacoes dinamicas:</b> Baseadas nos achados reais desta auditoria, alinhadas com <b>CIS Benchmarks</b> (Microsoft 365), <b>NIST SP 800-53</b> (Access Control) e <b>Microsoft Privileged Access Roadmap</b>. Cada recomendacao inclui referencia ao controle e link direto ao portal para acao imediata.</div>
+<div class="rt" style="padding:8px 14px">Baseadas nos achados reais. Ref: <b>CIS Benchmark</b>, <b>NIST SP 800-53</b>, <b>Microsoft PAR</b>. Links diretos ao portal.</div>
 <div style="overflow-x:auto"><table style="min-width:900px"><thead><tr><th style="min-width:80px">Severidade</th><th style="min-width:100px">Categoria</th><th style="min-width:200px">Achado</th><th style="min-width:280px">Recomendacao</th><th style="min-width:150px">Referencia</th></tr></thead><tbody>
 $tblRecs
 </tbody></table></div></div></div>
 
 <!-- S11: TECHNICAL REFERENCES -->
 <div class="sc"><div class="st">&#x1F4DA; 11. Informacoes Tecnicas</div><div class="sb">
-<div class="rt"><b>APIs utilizadas:</b> <code>roleManagement/defender</code> (Graph beta) para custom roles e assignments do Unified RBAC. <code>roleManagement/directory</code> (Graph v1.0) para Entra ID Roles. <code>runHuntingQuery</code> (Graph v1.0) para eventos KQL. Todas as operacoes sao <b>somente leitura</b>.</div>
+<div class="rt" style="padding:8px 14px"><code>roleManagement/defender</code> (beta) + <code>roleManagement/directory</code> (v1.0) + <code>runHuntingQuery</code> (v1.0). <b>Somente leitura</b>.</div>
 <div class="gr">
 <div>
 <h4 style="color:#6e7681;font-size:11px;margin-bottom:6px">Permissoes do Script</h4>
