@@ -23,7 +23,7 @@ param(
     [int]$DaysBack = 30
 )
 $ErrorActionPreference = "Stop"
-$scriptVersion = "2.9.0"
+$scriptVersion = "3.0.0"
 
 # =====================================================================
 # FUNCOES AUXILIARES
@@ -205,10 +205,38 @@ try {
 # =====================================================================
 Write-Step "Mapeando categorias de permissao..."
 $permCatDefs = @(
-    @{Key="secops";         Name="Responder a Incidentes"; Short="Incidents"; Desc="Pode ver/agir em alertas, incidents, hunting, live response, quarentena de email"; Tip="Quem responde quando ha um ataque? MANAGE = investiga e age. READ = so visualiza."; Color="#f85149"; Icon="&#x1F6A8;"}
-    @{Key="securityposture"; Name="Gerir Vulnerabilidades"; Short="Posture"; Desc="Pode ver/agir em TVM, Secure Score, baselines, exposure management"; Tip="Quem corrige vulnerabilidades? MANAGE = cria tickets e aplica. READ = so ve."; Color="#d29922"; Icon="&#x1F50D;"}
-    @{Key="authorization";  Name="Alterar Permissoes";     Short="Config"; Desc="Pode criar/editar roles, configurar deteccoes, alterar settings do portal"; Tip="PERIGO: quem tem MANAGE aqui pode dar acesso a si proprio. Monitorar sempre."; Color="#58a6ff"; Icon="&#x1F511;"}
-    @{Key="dataops";        Name="Aceder a Dados";         Short="Dados"; Desc="Pode gerir retencao, data lake Sentinel, tabelas, connectors"; Tip="Controla dados brutos. MANAGE = pode apagar ou mover dados. READ = consulta."; Color="#3fb950"; Icon="&#x1F4BE;"}
+    @{Key="secops";         Name="Responder a Incidentes"; Short="Incidents"; Desc="Pode ver/agir em alertas, incidents, hunting, live response, quarentena de email"; Tip="Quem responde quando ha um ataque? MANAGE = investiga e age. READ = so visualiza."; Color="#f85149"; Icon="&#x1F6A8;"
+      Subs=@(
+        @{K="securityDataBasics";N="Ver alertas e incidents";Ico="&#x1F4CB;";Risk="baixo"},
+        @{K="alerts";N="Gerir alertas e investigacoes";Ico="&#x1F514;";Risk="medio"},
+        @{K="response";N="Acoes de resposta (isolar device, bloquear)";Ico="&#x1F6AB;";Risk="alto"},
+        @{K="liveResponseBasic";N="Live response basico (ler ficheiros)";Ico="&#x1F4BB;";Risk="alto"},
+        @{K="liveResponseAdvanced";N="Live response avancado (executar scripts)";Ico="&#x26A0;";Risk="critico"},
+        @{K="fileCollection";N="Recolher ficheiros para analise";Ico="&#x1F4C1;";Risk="medio"},
+        @{K="emailQuarantine";N="Quarentena de email (ver/libertar)";Ico="&#x1F4E7;";Risk="medio"},
+        @{K="emailAdvancedActions";N="Apagar emails (soft/hard delete)";Ico="&#x1F5D1;";Risk="critico"}
+      )}
+    @{Key="securityposture"; Name="Gerir Vulnerabilidades"; Short="Posture"; Desc="Pode ver/agir em TVM, Secure Score, baselines, exposure management"; Tip="Quem corrige vulnerabilidades? MANAGE = cria tickets e aplica. READ = so ve."; Color="#d29922"; Icon="&#x1F50D;"
+      Subs=@(
+        @{K="vulnerabilityManagement";N="Ver vulnerabilidades e software";Ico="&#x1F41B;";Risk="baixo"},
+        @{K="exceptionHandling";N="Criar excecoes de seguranca";Ico="&#x26A0;";Risk="medio"},
+        @{K="remediationHandling";N="Criar tickets de remediacao";Ico="&#x1F527;";Risk="medio"},
+        @{K="applicationHandling";N="Bloquear/desbloquear aplicacoes";Ico="&#x1F6AB;";Risk="alto"},
+        @{K="securityBaselineAssessment";N="Gerir baselines de seguranca";Ico="&#x1F4CA;";Risk="medio"},
+        @{K="exposureManagement";N="Secure Score e exposure";Ico="&#x1F3AF;";Risk="baixo"}
+      )}
+    @{Key="authorization";  Name="Alterar Permissoes";     Short="Config"; Desc="Pode criar/editar roles, configurar deteccoes, alterar settings do portal"; Tip="PERIGO: quem tem MANAGE aqui pode dar acesso a si proprio. Monitorar sempre."; Color="#58a6ff"; Icon="&#x1F511;"
+      Subs=@(
+        @{K="authorization";N="Criar e editar roles RBAC";Ico="&#x1F511;";Risk="critico"},
+        @{K="coreSecuritySettings";N="Configuracoes de seguranca do portal";Ico="&#x2699;";Risk="alto"},
+        @{K="detectionTuning";N="Custom detections e alert tuning";Ico="&#x1F50D;";Risk="alto"},
+        @{K="systemSettings";N="Configuracoes gerais do sistema";Ico="&#x2699;";Risk="medio"}
+      )}
+    @{Key="dataops";        Name="Aceder a Dados";         Short="Dados"; Desc="Pode gerir retencao, data lake Sentinel, tabelas, connectors"; Tip="Controla dados brutos. MANAGE = pode apagar ou mover dados. READ = consulta."; Color="#3fb950"; Icon="&#x1F4BE;"
+      Subs=@(
+        @{K="data";N="Retencao, tiers e tabelas do data lake";Ico="&#x1F4BE;";Risk="alto"},
+        @{K="analyticsJobsSchedule";N="Agendar analytics jobs (notebooks)";Ico="&#x1F4CA;";Risk="medio"}
+      )}
 )
 
 $permMatrix = @()
@@ -230,7 +258,7 @@ foreach ($role in $dR.value) {
         }
     }
     if ($wlScope.Count -eq 0) { $wlScope = @("(sem assignment)") }
-    $row = @{RoleName=$role.displayName; Source="RBAC"; Cats=@{}; Workloads=($wlScope | Select-Object -Unique)}
+    $row = @{RoleName=$role.displayName; Source="RBAC"; Cats=@{}; Workloads=($wlScope | Select-Object -Unique); RawActions=$actions}
     foreach ($cat in $permCatDefs) {
         $catActions = $actions | Where-Object { $_ -match $cat.Key }
         $hasManage = ($catActions | Where-Object { $_ -match 'manage' }).Count -gt 0
@@ -243,13 +271,13 @@ foreach ($role in $dR.value) {
 # Entra ID Roles mapeadas para categorias RBAC (conforme docs Microsoft)
 # Entra roles SEMPRE aplicam a TODOS os workloads (nao ha scoping por workload)
 $entraRoleMap = @(
-    @{RoleName="Global Administrator"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); Cats=@{secops="manage";securityposture="manage";authorization="manage";dataops="manage"}},
-    @{RoleName="Security Administrator"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); Cats=@{secops="manage";securityposture="manage";authorization="manage";dataops="-"}},
-    @{RoleName="Security Operator"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); Cats=@{secops="manage";securityposture="read";authorization="-";dataops="-"}},
-    @{RoleName="Security Reader"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); Cats=@{secops="read";securityposture="read";authorization="-";dataops="-"}},
-    @{RoleName="Global Reader"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); Cats=@{secops="read";securityposture="read";authorization="read";dataops="-"}},
-    @{RoleName="Compliance Administrator"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); Cats=@{secops="read";securityposture="-";authorization="-";dataops="-"}},
-    @{RoleName="Compliance Data Admin"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); Cats=@{secops="read";securityposture="-";authorization="-";dataops="-"}}
+    @{RoleName="Global Administrator"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); RawActions=@("microsoft.xdr/secops/*/manage","microsoft.xdr/securityposture/*/manage","microsoft.xdr/authorization/*/manage","microsoft.xdr/dataops/*/manage"); Cats=@{secops="manage";securityposture="manage";authorization="manage";dataops="manage"}},
+    @{RoleName="Security Administrator"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); RawActions=@("microsoft.xdr/secops/*/manage","microsoft.xdr/securityposture/*/manage","microsoft.xdr/authorization/*/manage"); Cats=@{secops="manage";securityposture="manage";authorization="manage";dataops="-"}},
+    @{RoleName="Security Operator"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); RawActions=@("microsoft.xdr/secops/*/manage","microsoft.xdr/securityposture/*/read"); Cats=@{secops="manage";securityposture="read";authorization="-";dataops="-"}},
+    @{RoleName="Security Reader"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); RawActions=@("microsoft.xdr/secops/*/read","microsoft.xdr/securityposture/*/read"); Cats=@{secops="read";securityposture="read";authorization="-";dataops="-"}},
+    @{RoleName="Global Reader"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); RawActions=@("microsoft.xdr/secops/*/read","microsoft.xdr/securityposture/*/read","microsoft.xdr/authorization/*/read"); Cats=@{secops="read";securityposture="read";authorization="read";dataops="-"}},
+    @{RoleName="Compliance Administrator"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); RawActions=@("microsoft.xdr/secops/securityDataBasics/read"); Cats=@{secops="read";securityposture="-";authorization="-";dataops="-"}},
+    @{RoleName="Compliance Data Admin"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); RawActions=@("microsoft.xdr/secops/securityDataBasics/read"); Cats=@{secops="read";securityposture="-";authorization="-";dataops="-"}}
 )
 # Adicionar somente Entra roles que tem pelo menos 1 membro
 foreach ($er in $entraRoleMap) {
@@ -528,15 +556,10 @@ $wlTips = @{"MDE"="Defender for Endpoint";"MDO"="Defender for Office 365";"MDI"=
 $tblPermMatrix = ""
 foreach ($pm in $permMatrix) {
     $srcBadge = if ($pm.Source -eq "RBAC") { "<span class='badge' style='background:#3fb95022;color:#3fb950'>RBAC</span>" } else { "<span class='badge' style='background:#58a6ff22;color:#58a6ff'>Entra</span>" }
-    # Contar membros desta role
     $mCount = 0
-    if ($pm.Source -eq "RBAC") {
-        $mCount = ($rb | Where-Object { $_.CR -eq $pm.RoleName -and $_.To -ne '(vazio)' -and $_.To -ne '(indisponivel)' }).Count
-    } else {
-        $mCount = ($rd | Where-Object { $_.Role -eq $pm.RoleName -and $_.Name -ne '(vazio)' }).Count
-    }
+    if ($pm.Source -eq "RBAC") { $mCount = ($rb | Where-Object { $_.CR -eq $pm.RoleName -and $_.To -ne '(vazio)' -and $_.To -ne '(indisponivel)' }).Count }
+    else { $mCount = ($rd | Where-Object { $_.Role -eq $pm.RoleName -and $_.Name -ne '(vazio)' }).Count }
     $mBadge = if ($mCount -gt 0) { "<span class='badge' style='background:#58a6ff15;color:#58a6ff;margin-left:4px'>$mCount</span>" } else { "<span style='color:#30363d;font-size:9px;margin-left:4px'>0</span>" }
-    # Workload dots
     $wlDots = ""
     foreach ($wn in @("MDE","MDO","MDI","MDCA")) {
         $isActive = $pm.Workloads -contains $wn
@@ -546,12 +569,33 @@ foreach ($pm in $permMatrix) {
         $wlDots += "<span title='$tipText' style='color:$dotColor;opacity:$dotOp;font-size:11px;margin:0 1px;cursor:help'>&#x25CF;</span>"
     }
     $tblPermMatrix += "<tr><td style='font-weight:600'>$srcBadge <span style='color:$(if($pm.Source -eq "RBAC"){"#3fb950"}else{"#58a6ff"})'>$($pm.RoleName)</span>$mBadge</td><td style='text-align:center;white-space:nowrap'>$wlDots</td>"
+    # Granular cells per category
     foreach ($cat in $permCatDefs) {
         $lvl = $pm.Cats[$cat.Key]
-        $manageLabel = if ($lvl -eq "manage") { "Sim, controle total" } elseif ($lvl -eq "read") { "Somente visualizar" } else { "Sem acesso" }
         $cellStyle = if ($lvl -eq "manage") { "background:linear-gradient(135deg,#f8514930,#f8514910);color:#f85149;font-weight:700;border:1px solid #f8514940" } elseif ($lvl -eq "read") { "background:linear-gradient(135deg,#3fb95030,#3fb95010);color:#3fb950;font-weight:600;border:1px solid #3fb95040" } else { "color:#30363d" }
-        $cellIcon = if ($lvl -eq "manage") { "<div title='$manageLabel' style='cursor:help'><div style='font-size:12px'>&#x1F534;</div><div style='font-size:8px;margin-top:1px'>CONTROLE TOTAL</div></div>" } elseif ($lvl -eq "read") { "<div title='$manageLabel' style='cursor:help'><div style='font-size:12px'>&#x1F7E2;</div><div style='font-size:8px;margin-top:1px'>SO VISUALIZA</div></div>" } else { "<div title='Sem acesso a esta area' style='color:#30363d;font-size:10px;cursor:help'>&#x2716;</div>" }
-        $tblPermMatrix += "<td style='$cellStyle;text-align:center;padding:8px 6px;border-radius:6px'>$cellIcon</td>"
+        # Build granular sub-permission detail for tooltip and display
+        $subDetail = ""
+        $subCount = 0
+        if ($lvl -ne "-" -and $cat.Subs) {
+            foreach ($sub in $cat.Subs) {
+                $hasThisSub = $false
+                if ($pm.RawActions) {
+                    foreach ($ra in $pm.RawActions) {
+                        if ($ra -match "$($cat.Key)/\*/" -or $ra -match "$($cat.Key)/$($sub.K)/") { $hasThisSub = $true; break }
+                    }
+                }
+                if ($hasThisSub) {
+                    $subCount++
+                    $riskColor = switch ($sub.Risk) { "critico" {"#f85149"} "alto" {"#ff7b72"} "medio" {"#d29922"} default {"#8b949e"} }
+                    $subDetail += "<div style='font-size:8px;line-height:1.3;color:$riskColor' title='Risco: $($sub.Risk)'>$($sub.Ico) $($sub.N)</div>"
+                }
+            }
+        }
+        $mainLabel = if ($lvl -eq "manage") { "<div style='font-size:11px'>&#x1F534;</div>" } elseif ($lvl -eq "read") { "<div style='font-size:11px'>&#x1F7E2;</div>" } else { "<div style='color:#30363d;font-size:10px'>&#x2716;</div>" }
+        $subSummary = if ($subCount -gt 0) { "<div style='font-size:7px;color:#6e7681;margin-top:1px'>$subCount acoes</div>" } elseif ($lvl -ne "-") { "<div style='font-size:7px;color:#6e7681;margin-top:1px'>$(if($lvl -eq 'manage'){'TOTAL'}else{'LEITURA'})</div>" } else { "" }
+        $cellContent = "<div style='cursor:help' title='$($cat.Name): $(if($lvl -eq "manage"){"Controle total"}elseif($lvl -eq "read"){"Somente leitura"}else{"Sem acesso"})'>$mainLabel$subSummary</div>"
+        if ($subDetail -and $lvl -eq "manage") { $cellContent = "<details style='cursor:pointer'><summary style='list-style:none;text-align:center'>$mainLabel<div style='font-size:7px;color:#6e7681'>$subCount acoes &#x25BC;</div></summary><div style='text-align:left;padding:4px 0'>$subDetail</div></details>" }
+        $tblPermMatrix += "<td style='$cellStyle;text-align:center;padding:6px 4px;border-radius:6px;vertical-align:top'>$cellContent</td>"
     }
     $tblPermMatrix += "</tr>`n"
 }
