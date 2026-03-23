@@ -23,7 +23,7 @@ param(
     [int]$DaysBack = 30
 )
 $ErrorActionPreference = "Stop"
-$scriptVersion = "2.5.0"
+$scriptVersion = "2.6.0"
 
 # =====================================================================
 # FUNCOES AUXILIARES
@@ -330,34 +330,46 @@ Write-OK "Risco: $critCount CRITICAL, $highCount HIGH, $medCount MEDIUM, $lowCou
 # 8. EVIDENCIAS DE ALTERACAO RBAC (KQL melhorado)
 # =====================================================================
 Write-Step "Coletando evidencias de alteracoes RBAC..."
+# Roles que afetam o XDR (para filtrar)
+$secRolesKQL = ($secRoles | ForEach-Object { "`"$_`"" }) -join ","
 $rbacChanges = @()
 try {
-    $rbacChanges = Invoke-KQL @'
+    $rbacChanges = Invoke-KQL @"
 CloudAppEvents
-| where ActionType in ("Add member to role.", "Remove member from role.", "AddRole", "EditRole", "DeleteRole", "Add eligible member to role.", "Remove eligible member from role.")
+| where ActionType in ("Add member to role.", "Remove member from role.", "Add eligible member to role.", "Remove eligible member from role.")
 | extend Props = parse_json(tostring(RawEventData.ModifiedProperties))
 | extend RoleName = coalesce(
     tostring(parse_json(tostring(Props[1])).NewValue),
     tostring(parse_json(tostring(Props[0])).NewValue),
     tostring(RawEventData.Target[0].ID),
     "")
-| extend TargetName = coalesce(
-    tostring(RawEventData.Target[3].ID),
-    tostring(RawEventData.Target[2].ID),
-    tostring(RawEventData.ObjectId),
-    "")
-| extend TargetType = coalesce(
-    tostring(RawEventData.Target[2].ID),
-    tostring(RawEventData.Target[1].ID),
-    "")
+| where RoleName has_any ($secRolesKQL)
+| extend TargetName = coalesce(tostring(RawEventData.Target[3].ID), tostring(RawEventData.ObjectId), "")
+| extend TargetType = coalesce(tostring(RawEventData.Target[2].ID), "")
 | extend ClientIP = coalesce(IPAddress, "")
 | extend Pais = coalesce(CountryCode, "")
 | extend UserAg = coalesce(tostring(RawEventData.ExtendedProperties[0].Value), UserAgent, "")
-| project Timestamp, ActionType, QuemFez=AccountDisplayName, QuemFezUPN=AccountId, RoleName, TargetName, TargetType, IP=ClientIP, Country=Pais, UA=UserAg
+| project Timestamp, ActionType, QuemFez=AccountDisplayName, RoleName, TargetName, TargetType, IP=ClientIP, Country=Pais, UA=UserAg, Tipo="Role XDR"
 | sort by Timestamp desc
-'@
-    Write-OK "Alteracoes de role/RBAC: $($rbacChanges.Count)"
-} catch { Write-Warn "Erro ao buscar alteracoes RBAC: $($_.Exception.Message)" }
+"@
+    Write-OK "Alteracoes de Entra Roles XDR: $($rbacChanges.Count)"
+} catch { Write-Warn "Erro: $($_.Exception.Message)" }
+
+# Custom RBAC role changes (AddRole, EditRole, DeleteRole)
+$rbacCustomChanges = @()
+try {
+    $rbacCustomChanges = Invoke-KQL @"
+CloudAppEvents
+| where ActionType in ("AddRole", "EditRole", "DeleteRole")
+| extend RoleName = coalesce(tostring(parse_json(tostring(RawEventData.ModifiedProperties[0])).NewValue), tostring(RawEventData.ObjectId), "")
+| extend ClientIP = coalesce(IPAddress, "")
+| extend Pais = coalesce(CountryCode, "")
+| extend UserAg = coalesce(tostring(RawEventData.ExtendedProperties[0].Value), UserAgent, "")
+| project Timestamp, ActionType, QuemFez=AccountDisplayName, RoleName, TargetName="", TargetType="", IP=ClientIP, Country=Pais, UA=UserAg, Tipo="Custom RBAC"
+| sort by Timestamp desc
+"@
+    Write-OK "Alteracoes de Custom RBAC: $($rbacCustomChanges.Count)"
+} catch { Write-Warn "Erro custom RBAC: $($_.Exception.Message)" }
 
 $rbacGroupChanges = @()
 if ($dGrp.Count -gt 0) {
@@ -365,10 +377,10 @@ if ($dGrp.Count -gt 0) {
     try {
         $rbacGroupChanges = Invoke-KQL "CloudAppEvents | where ActionType in ('Add member to group.','Remove member from group.') | extend GroupName = coalesce(tostring(parse_json(tostring(RawEventData.ModifiedProperties[1])).NewValue),'') | where GroupName has_any ($grpFilter) | extend TargetUPN = coalesce(tostring(RawEventData.ObjectId),'') | extend ClientIP = coalesce(IPAddress,'') | extend Pais = coalesce(CountryCode,'') | extend UserAg = coalesce(UserAgent,'') | project Timestamp, ActionType, QuemFez=AccountDisplayName, GroupName, TargetUPN, IP=ClientIP, Country=Pais, UA=UserAg | sort by Timestamp desc"
         Write-OK "Alteracoes em grupos RBAC: $($rbacGroupChanges.Count)"
-    } catch { Write-Warn "Erro ao buscar alteracoes de grupo RBAC" }
+    } catch { Write-Warn "Erro grupos RBAC" }
 }
-$totalRbacChanges = $rbacChanges.Count + $rbacGroupChanges.Count
-Write-OK "Total evidencias RBAC: $totalRbacChanges"
+$totalRbacChanges = $rbacChanges.Count + $rbacCustomChanges.Count + $rbacGroupChanges.Count
+Write-OK "Total evidencias XDR-relevantes: $totalRbacChanges"
 
 # =====================================================================
 # 9. KQL QUERIES (melhoradas - extracao de Detalhe e IP)
@@ -562,46 +574,55 @@ if ($medPct -gt 0) { $svgRisk += "<rect x='$rx' y='0' width='$medPct' height='28
 if ($lowPct -gt 0 -and $lowCount -gt 0) { $svgRisk += "<rect x='$rx' y='0' width='$lowPct' height='28' fill='#3fb950' opacity='.9'><title>LOW: $lowCount principals</title></rect>" }
 $svgRisk += "<text x='150' y='18' fill='white' font-family='Segoe UI' font-size='11' text-anchor='middle' font-weight='700' style='text-shadow:0 1px 3px rgba(0,0,0,.8)'>$critCount CRITICAL  |  $highCount HIGH  |  $medCount MEDIUM  |  $lowCount LOW</text>"
 
-# -- Tabela S4: Evidencias RBAC (com narrativa humana)
+# -- Tabela S4: Timeline unificada de alteracoes XDR (narrativa + impacto + contexto)
 $tblEvidence = ""
+# 1) Entra Role changes que afetam XDR
 foreach ($rc in $rbacChanges) {
     $actionColor = if ($rc.ActionType -match "Add") { "#3fb950" } elseif ($rc.ActionType -match "Remove") { "#f85149" } else { "#d29922" }
-    $actionIcon = if ($rc.ActionType -match "Add") { "&#x2795;" } elseif ($rc.ActionType -match "Remove") { "&#x274C;" } else { "&#x270F;&#xFE0F;" }
     $ts2 = ([datetime]$rc.Timestamp).ToString("yyyy-MM-dd HH:mm")
     $ipDisplay = if ($rc.IP) { $rc.IP } else { "-" }
     $countryDisplay = if ($rc.Country) { " ($($rc.Country))" } else { "" }
-    # Narrativa humana: o que aconteceu
     $roleSafe = if ($rc.RoleName) { $rc.RoleName -replace '"','' -replace '\[|\]','' } else { "(nao identificada)" }
     $targetSafe = if ($rc.TargetName) { $rc.TargetName } else { "(desconhecido)" }
     $narrative = switch -Wildcard ($rc.ActionType) {
-        "Add member to role*" { "<b>$($rc.QuemFez)</b> atribuiu a role <span style='color:#58a6ff'>$roleSafe</span> ao utilizador <b>$targetSafe</b>" }
-        "Remove member from role*" { "<b>$($rc.QuemFez)</b> removeu <b>$targetSafe</b> da role <span style='color:#58a6ff'>$roleSafe</span>" }
-        "Add eligible*" { "<b>$($rc.QuemFez)</b> tornou <b>$targetSafe</b> elegivel para <span style='color:#58a6ff'>$roleSafe</span> (PIM)" }
-        "Remove eligible*" { "<b>$($rc.QuemFez)</b> removeu elegibilidade PIM de <b>$targetSafe</b> para <span style='color:#58a6ff'>$roleSafe</span>" }
-        "AddRole" { "<b>$($rc.QuemFez)</b> criou uma nova custom role RBAC: <span style='color:#3fb950'>$roleSafe</span>" }
-        "EditRole" { "<b>$($rc.QuemFez)</b> editou a custom role: <span style='color:#d29922'>$roleSafe</span>" }
-        "DeleteRole" { "<b>$($rc.QuemFez)</b> eliminou a custom role: <span style='color:#f85149'>$roleSafe</span>" }
-        default { "<b>$($rc.QuemFez)</b> executou $($rc.ActionType) em $targetSafe" }
+        "Add member to role*" { "Atribuiu <span style='color:#58a6ff;font-weight:700'>$roleSafe</span> a <b>$targetSafe</b>" }
+        "Remove member from role*" { "Removeu <b>$targetSafe</b> de <span style='color:#58a6ff;font-weight:700'>$roleSafe</span>" }
+        "Add eligible*" { "Ativou elegibilidade PIM de <b>$targetSafe</b> para <span style='color:#58a6ff'>$roleSafe</span>" }
+        "Remove eligible*" { "Desativou elegibilidade PIM de <b>$targetSafe</b> para <span style='color:#58a6ff'>$roleSafe</span>" }
+        default { "$($rc.ActionType) em $targetSafe" }
     }
-    $impacto = switch -Wildcard ($rc.ActionType) {
-        "Add member to role*" { if ($roleSafe -match "Global Admin|Security Admin") { "<span class='badge' style='background:#f8514922;color:#f85149'>CRITICO</span>" } else { "<span class='badge' style='background:#d2992222;color:#d29922'>ALTO</span>" } }
-        "Remove member*" { "<span class='badge' style='background:#58a6ff22;color:#58a6ff'>MEDIO</span>" }
-        "AddRole|EditRole|DeleteRole" { "<span class='badge' style='background:#f8514922;color:#f85149'>CRITICO</span>" }
-        default { "<span class='badge' style='background:#8b949e22;color:#8b949e'>INFO</span>" }
-    }
-    $uaShort = if ($rc.UA -and $rc.UA.Length -gt 5) { $rc.UA.Substring(0, [Math]::Min(40, $rc.UA.Length)) + "..." } else { "-" }
-    $tblEvidence += "<tr style='border-left:3px solid $actionColor'><td class='mono'>$ts2</td><td>$impacto</td><td style='font-size:11px;line-height:1.5'>$narrative</td><td class='mono'>$ipDisplay$countryDisplay</td><td class='sm' title='$(HtmlEncode $rc.UA)'>$uaShort</td></tr>`n"
+    $impacto = if ($roleSafe -match "Global Admin|Security Admin") { "<span class='badge' style='background:#f8514922;color:#f85149'>CRITICO</span>" } elseif ($rc.ActionType -match "Remove") { "<span class='badge' style='background:#58a6ff22;color:#58a6ff'>MEDIO</span>" } else { "<span class='badge' style='background:#d2992222;color:#d29922'>ALTO</span>" }
+    $tipoEvt = "<span class='badge' style='background:#58a6ff15;color:#58a6ff'>Entra Role</span>"
+    $uaShort = if ($rc.UA -and $rc.UA.Length -gt 3) { ($rc.UA -replace '\{|\}|"','').Substring(0, [Math]::Min(35, ($rc.UA -replace '\{|\}|"','').Length)) } else { "-" }
+    $tblEvidence += "<tr style='border-left:3px solid $actionColor'><td class='mono'>$ts2</td><td>$impacto</td><td>$tipoEvt</td><td><b>$($rc.QuemFez)</b></td><td style='font-size:11px;line-height:1.5'>$narrative</td><td class='mono'>$ipDisplay$countryDisplay</td><td class='sm' title='$(HtmlEncode $rc.UA)'>$uaShort</td></tr>`n"
 }
+# 2) Custom RBAC role changes
+foreach ($rc in $rbacCustomChanges) {
+    $actionColor = switch ($rc.ActionType) { "AddRole" {"#3fb950"} "EditRole" {"#d29922"} "DeleteRole" {"#f85149"} default {"#8b949e"} }
+    $ts2 = ([datetime]$rc.Timestamp).ToString("yyyy-MM-dd HH:mm")
+    $ipDisplay = if ($rc.IP) { $rc.IP } else { "-" }
+    $countryDisplay = if ($rc.Country) { " ($($rc.Country))" } else { "" }
+    $roleSafe = if ($rc.RoleName) { $rc.RoleName -replace '"','' } else { "(nao identificada)" }
+    $narrative = switch ($rc.ActionType) {
+        "AddRole" { "Criou nova custom role: <span style='color:#3fb950;font-weight:700'>$roleSafe</span>" }
+        "EditRole" { "Editou custom role: <span style='color:#d29922;font-weight:700'>$roleSafe</span>" }
+        "DeleteRole" { "Eliminou custom role: <span style='color:#f85149;font-weight:700'>$roleSafe</span>" }
+        default { "$($rc.ActionType) em $roleSafe" }
+    }
+    $tipoEvt = "<span class='badge' style='background:#3fb95015;color:#3fb950'>Custom RBAC</span>"
+    $tblEvidence += "<tr style='border-left:3px solid $actionColor'><td class='mono'>$ts2</td><td><span class='badge' style='background:#f8514922;color:#f85149'>CRITICO</span></td><td>$tipoEvt</td><td><b>$($rc.QuemFez)</b></td><td style='font-size:11px;line-height:1.5'>$narrative</td><td class='mono'>$ipDisplay$countryDisplay</td><td class='sm'>-</td></tr>`n"
+}
+# 3) RBAC group membership changes
 foreach ($gc in $rbacGroupChanges) {
     $actionColor = if ($gc.ActionType -match "Add") { "#3fb950" } else { "#f85149" }
-    $actionIcon = if ($gc.ActionType -match "Add") { "&#x2795;" } else { "&#x274C;" }
     $ts2 = ([datetime]$gc.Timestamp).ToString("yyyy-MM-dd HH:mm")
     $ipDisplay = if ($gc.IP) { $gc.IP } else { "-" }
     $countryDisplay = if ($gc.Country) { " ($($gc.Country))" } else { "" }
     $grpSafe = if ($gc.GroupName) { $gc.GroupName } else { "(desconhecido)" }
     $tgtSafe = if ($gc.TargetUPN) { $gc.TargetUPN } else { "(desconhecido)" }
-    $narrative = if ($gc.ActionType -match "Add") { "<b>$($gc.QuemFez)</b> adicionou <b>$tgtSafe</b> ao grupo RBAC <span style='color:#3fb950'>$grpSafe</span>" } else { "<b>$($gc.QuemFez)</b> removeu <b>$tgtSafe</b> do grupo RBAC <span style='color:#f85149'>$grpSafe</span>" }
-    $tblEvidence += "<tr style='border-left:3px solid $actionColor'><td class='mono'>$ts2</td><td><span class='badge' style='background:#d2992222;color:#d29922'>ALTO</span></td><td style='font-size:11px;line-height:1.5'>$narrative</td><td class='mono'>$ipDisplay$countryDisplay</td><td class='sm'>-</td></tr>`n"
+    $narrative = if ($gc.ActionType -match "Add") { "Adicionou <b>$tgtSafe</b> ao grupo RBAC <span style='color:#3fb950;font-weight:700'>$grpSafe</span>" } else { "Removeu <b>$tgtSafe</b> do grupo RBAC <span style='color:#f85149;font-weight:700'>$grpSafe</span>" }
+    $tipoEvt = "<span class='badge' style='background:#d2992215;color:#d29922'>Grupo RBAC</span>"
+    $tblEvidence += "<tr style='border-left:3px solid $actionColor'><td class='mono'>$ts2</td><td><span class='badge' style='background:#d2992222;color:#d29922'>ALTO</span></td><td>$tipoEvt</td><td><b>$($gc.QuemFez)</b></td><td style='font-size:11px;line-height:1.5'>$narrative</td><td class='mono'>$ipDisplay$countryDisplay</td><td class='sm'>-</td></tr>`n"
 }
 
 # -- Tabela S5: Entra ID Roles / Caminhos de Acesso (com links clicaveis)
@@ -944,9 +965,9 @@ $tblRisk
 </tbody></table></div></div></div>
 
 <!-- S4: EVIDENCE -->
-<div class="sc"><div class="st" style="background:#2d1a1a">&#x1F6A8; 4. Historico -- Quem fez o que, quando e como?<a href="$($portal.Audit)" target="_blank">Audit Log &#x2192;</a></div><div class="sb">
-<div class="rt" style="padding:8px 14px"><b>$totalRbacChanges</b> alteracoes nos ultimos $DaysBack dias. Cada linha e uma acao que <b>mudou quem tem acesso ao Defender XDR</b>.</div>
-$(if($tblEvidence){"<div style='overflow-x:auto'><table style='min-width:900px'><thead><tr><th style='min-width:130px'>Quando</th><th style='min-width:80px'>Impacto</th><th style='min-width:350px'>O que aconteceu</th><th style='min-width:120px'>IP / Pais</th><th style='min-width:140px'>User Agent</th></tr></thead><tbody>$tblEvidence</tbody></table></div>"}else{"<div style='background:#21262d;border-radius:8px;padding:18px;text-align:center'><span style='color:#3fb950;font-size:16px'>&#x2705;</span><br><span style='color:#8b949e'>Nenhuma alteracao de acesso ao Defender XDR nos ultimos $DaysBack dias.</span></div>"})
+<div class="sc"><div class="st" style="background:#2d1a1a">&#x1F6A8; 4. O que mudou no acesso ao XDR?<a href="$($portal.Audit)" target="_blank">Audit Log &#x2192;</a></div><div class="sb">
+<div class="rt" style="padding:8px 14px"><b>$totalRbacChanges</b> alteracao(es) que afetam o <b>acesso ao Defender XDR</b> nos ultimos $DaysBack dias. So mostra: Entra Roles de seguranca, custom roles RBAC, e grupos do RBAC.$(if($totalRbacChanges -eq 0){" &#x2705; Nenhuma alteracao -- estabilidade confirmada."})</div>
+$(if($tblEvidence){"<div style='overflow-x:auto'><table style='min-width:1000px'><thead><tr><th style='min-width:120px'>Quando</th><th style='min-width:75px'>Impacto</th><th style='min-width:90px'>Tipo</th><th style='min-width:130px'>Quem fez</th><th style='min-width:300px'>O que aconteceu</th><th style='min-width:110px'>IP / Pais</th><th style='min-width:100px'>Origem</th></tr></thead><tbody>$tblEvidence</tbody></table></div>"}else{"<div style='background:#0d1117;border:1px solid #3fb95040;border-radius:8px;padding:20px;text-align:center'><span style='color:#3fb950;font-size:20px'>&#x2705;</span><br><br><span style='color:#c9d1d9;font-size:13px'>Nenhuma alteracao de acesso ao Defender XDR nos ultimos $DaysBack dias.</span><br><span style='color:#6e7681;font-size:11px'>Entra Roles de seguranca, custom roles RBAC e grupos RBAC estao estaveis.</span><br><br><a href='$($portal.Audit)' target='_blank' style='color:#58a6ff;font-size:11px'>Verificar manualmente no Audit Log &#x2192;</a></div>"})
 </div></div>
 
 <!-- S5: ACCESS PATHS -->
