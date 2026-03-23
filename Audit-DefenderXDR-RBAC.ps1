@@ -23,7 +23,7 @@ param(
     [int]$DaysBack = 30
 )
 $ErrorActionPreference = "Stop"
-$scriptVersion = "2.7.0"
+$scriptVersion = "2.8.0"
 
 # =====================================================================
 # FUNCOES AUXILIARES
@@ -340,10 +340,12 @@ CloudAppEvents
 | extend Props = parse_json(tostring(RawEventData.ModifiedProperties))
 | extend RoleName = coalesce(
     tostring(parse_json(tostring(Props[1])).NewValue),
+    tostring(parse_json(tostring(Props[1])).OldValue),
     tostring(parse_json(tostring(Props[0])).NewValue),
+    tostring(parse_json(tostring(Props[0])).OldValue),
     tostring(RawEventData.Target[0].ID),
     "")
-| where RoleName has_any ($secRolesKQL)
+| where RoleName has_any ($secRolesKQL) or RoleName == ""
 | extend TargetName = coalesce(tostring(RawEventData.Target[3].ID), tostring(RawEventData.ObjectId), "")
 | extend TargetType = coalesce(tostring(RawEventData.Target[2].ID), "")
 | extend ClientIP = coalesce(IPAddress, "")
@@ -397,7 +399,7 @@ if ($dGrp.Count -gt 0) {
 }
 
 $kqlFull = @"
-CloudAppEvents | where ActionType in ("Add member to role.","Remove member from role.") | extend RoleName = coalesce(tostring(parse_json(tostring(RawEventData.ModifiedProperties[1])).NewValue),"") | where RoleName has_any ("Security Administrator","Security Operator","Security Reader","Global Administrator","Global Reader","Compliance Administrator","Compliance Data Administrator") | project Timestamp, Cenario="1-Role Entra ID", Acao=ActionType, QuemFez=AccountDisplayName, Detalhe=strcat(RoleName," -> ",tostring(RawEventData.ObjectId)), Alvo=coalesce(tostring(RawEventData.ObjectId),""), IP=coalesce(IPAddress,""), Pais=coalesce(CountryCode,"")
+CloudAppEvents | where ActionType in ("Add member to role.","Remove member from role.") | extend RoleName = coalesce(tostring(parse_json(tostring(RawEventData.ModifiedProperties[1])).NewValue),tostring(parse_json(tostring(RawEventData.ModifiedProperties[1])).OldValue),"") | where RoleName has_any ("Security Administrator","Security Operator","Security Reader","Global Administrator","Global Reader","Compliance Administrator","Compliance Data Administrator") | project Timestamp, Cenario="1-Role Entra ID", Acao=ActionType, QuemFez=AccountDisplayName, Detalhe=strcat(RoleName," -> ",tostring(RawEventData.ObjectId)), Alvo=coalesce(tostring(RawEventData.ObjectId),""), IP=coalesce(IPAddress,""), Pais=coalesce(CountryCode,"")
 | union (CloudAppEvents | where ActionType in ("Add member to group.","Remove member from group.") | extend GroupName = coalesce(tostring(parse_json(tostring(RawEventData.ModifiedProperties[1])).NewValue),"") | project Timestamp, Cenario="2-Grupo Entra ID", Acao=ActionType, QuemFez=AccountDisplayName, Detalhe=GroupName, Alvo=coalesce(tostring(RawEventData.ObjectId),""), IP=coalesce(IPAddress,""), Pais=coalesce(CountryCode,""))
 | union (CloudAppEvents | where ActionType in ("AddRole","EditRole","DeleteRole") | project Timestamp, Cenario="3-Custom Role RBAC", Acao=ActionType, QuemFez=AccountDisplayName, Detalhe=coalesce(tostring(parse_json(tostring(RawEventData.ModifiedProperties[0])).NewValue),tostring(RawEventData.ObjectId),""), Alvo="", IP=coalesce(IPAddress,""), Pais=coalesce(CountryCode,""))
 | union (IdentityDirectoryEvents | where ActionType == "Group Membership changed" | extend GroupName = tostring(AdditionalFields['TO.GROUP']) | extend RF = tostring(AdditionalFields['FROM.GROUP']) | project Timestamp, Cenario="4-Grupo AD on-prem", Acao=ActionType, QuemFez=AccountDisplayName, Detalhe=coalesce(GroupName,RF,""), Alvo=coalesce(tostring(AdditionalFields['TARGET_OBJECT.USER']),""), IP=coalesce(IPAddress,""), Pais="")
