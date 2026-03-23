@@ -23,7 +23,7 @@ param(
     [int]$DaysBack = 30
 )
 $ErrorActionPreference = "Stop"
-$scriptVersion = "2.8.0"
+$scriptVersion = "2.9.0"
 
 # =====================================================================
 # FUNCOES AUXILIARES
@@ -466,8 +466,24 @@ if ($multiPathPrincipals -gt 0) {
 }
 
 # Sempre recomendar access reviews e detection rule
-$recommendations += @{Sev="HIGH";Cat="Governance";Finding="Access Reviews periodicas";Rec="Configure Entra ID Access Reviews trimestrais para todas as roles de seguranca. Remova acessos orfaos.";Ref="CIS Benchmark 1.8 / NIST SP 800-53 AC-2(3)";Link=$portal.AccessRev}
+$recommendations += @{Sev="HIGH";Cat="Governance";Finding="Access Reviews periodicas";Rec="Configure Entra ID Access Reviews trimestrais para todas as roles de seguranca. Remova acessos orfaos automaticamente.";Ref="CIS Benchmark 1.8 / NIST SP 800-53 AC-2(3)";Link=$portal.AccessRev}
 $recommendations += @{Sev="HIGH";Cat="Detection";Finding="Detection Rule no Defender XDR";Rec="Crie a Detection Rule (secao 9) para alertar o SOC automaticamente sobre alteracoes RBAC.";Ref="NIST SP 800-53 AU-12 / MITRE T1078";Link=$portal.Hunt}
+
+# Recomendacoes adicionais baseadas nos achados
+if ($dR.value.Count -eq 0) {
+    $recommendations += @{Sev="MEDIUM";Cat="RBAC Posture";Finding="Nenhuma custom role RBAC configurada";Rec="O Unified RBAC permite controle granular por workload (MDE, MDO, MDI, MDCA). Sem custom roles, o acesso e controlado apenas por Entra Roles globais -- menos granular.";Ref="Microsoft Best Practice";Link=$portal.Perms}
+}
+if ($aWL -lt 4) {
+    $wlOff = ($wl | Where-Object { -not $_.A } | ForEach-Object { $_.N }) -join ", "
+    $recommendations += @{Sev="MEDIUM";Cat="Visibilidade";Finding="Workloads sem dados: $wlOff";Rec="Workloads inativos nao geram eventos no Advanced Hunting. Verifique se os conectores estao configurados no portal. Sem dados, a Detection Rule nao cobre esses workloads.";Ref="Microsoft Defender Onboarding";Link="https://security.microsoft.com/securitysettings"}
+}
+if ($dGrp.Count -eq 0 -and $dR.value.Count -gt 0) {
+    $recommendations += @{Sev="MEDIUM";Cat="RBAC Hygiene";Finding="Custom roles RBAC sem grupos atribuidos";Rec="As roles existem mas ninguem esta atribuido. Se intencional, remova as roles orfas. Se nao, atribua grupos de seguranca.";Ref="NIST SP 800-53 AC-2";Link=$portal.Perms}
+}
+$emptyGroupCount = ($rb | Where-Object { $_.TT -eq 'group' -and $_.Mb -eq '(vazio)' }).Count
+if ($emptyGroupCount -gt 0) {
+    $recommendations += @{Sev="LOW";Cat="RBAC Hygiene";Finding="$emptyGroupCount grupo(s) RBAC sem membros";Rec="Grupos atribuidos a roles RBAC mas sem nenhum membro. Podem ser grupos preparados para onboarding futuro ou orfaos.";Ref="NIST SP 800-53 AC-2(3)";Link=$portal.Perms}
+}
 
 Write-OK "$($recommendations.Count) recomendacoes geradas"
 
@@ -895,6 +911,7 @@ tr:hover{background:#1c2128}
 .ft .brand{color:#58a6ff;font-size:14px;font-weight:700;margin-bottom:4px}
 .ft .brand a{color:#58a6ff;text-decoration:none}
 .ft .sub{color:#484f58;font-size:10px;line-height:1.6}
+@media print{body{background:#fff;color:#000}.hd{background:#f5f5f5;border-color:#ddd}.sc{break-inside:avoid}.cd{border-color:#ddd}.st{background:#f0f0f0;color:#333}.rt{background:#f9f9f9;border-color:#ccc}th{background:#f0f0f0;color:#333}td{border-color:#eee}.badge{border:1px solid #ccc}.kql{background:#f5f5f5;border-color:#ddd;color:#333}svg{border-color:#ddd}}
 </style></head><body><div class="c">
 
 <!-- HEADER -->
@@ -914,8 +931,8 @@ tr:hover{background:#1c2128}
 <!-- KPI CARDS -->
 <div class="cds">
 <div class="cd c4"><div class="n">$critCount</div><div class="l">Principals<br>Risco CRITICAL</div></div>
-<div class="cd c2"><div class="n">$($dR.value.Count)</div><div class="l">Custom Roles<br>Unified RBAC</div></div>
-<div class="cd c1"><div class="n">$tRA</div><div class="l">Entra ID Roles<br>Ativas</div></div>
+<div class="cd c2"><div class="n">$uniquePrincipals</div><div class="l">Pessoas/SPs<br>com acesso ao XDR</div></div>
+<div class="cd c1"><div class="n">$($dR.value.Count)</div><div class="l">Custom Roles<br>Unified RBAC</div></div>
 <div class="cd c3"><div class="n">$totalRbacChanges</div><div class="l">Alteracoes RBAC<br>($DaysBack dias)</div></div>
 <div class="cd c5"><div class="n">$aWL<span style='font-size:14px;color:#6e7681'>/4</span></div><div class="l">Workloads<br>Ativos</div></div>
 <div class="cd c6"><div class="n">$($recommendations.Count)</div><div class="l">Recomendacoes<br>CIS/NIST</div></div>
@@ -941,6 +958,17 @@ $(if($multiPathPrincipals -gt 0){"<li style='color:#d29922'>&#x25CF; <b>$multiPa
 $(foreach($w in $wl){"<div style='display:flex;align-items:center;gap:6px'><span style='color:$(if($w.A){'#3fb950'}else{'#f85149'});font-size:14px'>$(if($w.A){'&#x25CF;'}else{'&#x25CB;'})</span><span style='color:$(if($w.A){'#c9d1d9'}else{'#6e7681'})'>$($w.N) -- $($w.F)</span></div>`n"})
 </div>
 <div style="margin-top:10px;font-size:10px;color:#6e7681">$aWL/4 workloads com dados no Advanced Hunting. Workloads inativos nao geram eventos no KQL.</div>
+</div>
+</div>
+<div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px;margin-top:12px">
+<h4 style="color:#58a6ff;font-size:12px;margin-bottom:8px">&#x1F4CB; Checklist de Conformidade Rapida</h4>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 20px;font-size:11px">
+<div>$(if($gaCount -le 2){"<span style='color:#3fb950'>&#x2705;</span>"}else{"<span style='color:#f85149'>&#x274C;</span>"}) Global Admins &#x2264; 2 <span style='color:#484f58'>(CIS 1.1)</span></div>
+<div>$(if($totalRbacChanges -eq 0){"<span style='color:#3fb950'>&#x2705;</span>"}else{"<span style='color:#d29922'>&#x26A0;&#xFE0F;</span>"}) RBAC estavel ($DaysBack dias) <span style='color:#484f58'>(NIST CM-3)</span></div>
+<div>$(if($nS -eq 0){"<span style='color:#3fb950'>&#x2705;</span>"}else{"<span style='color:#d29922'>&#x26A0;&#xFE0F;</span>"}) Sem SPs privilegiados <span style='color:#484f58'>(CIS 2.2)</span></div>
+<div>$(if($dR.value.Count -gt 0){"<span style='color:#3fb950'>&#x2705;</span>"}else{"<span style='color:#d29922'>&#x26A0;&#xFE0F;</span>"}) RBAC granular ativo <span style='color:#484f58'>(Microsoft)</span></div>
+<div>$(if($multiPathPrincipals -eq 0){"<span style='color:#3fb950'>&#x2705;</span>"}else{"<span style='color:#d29922'>&#x26A0;&#xFE0F;</span>"}) Sem multi-path <span style='color:#484f58'>(NIST AC-6)</span></div>
+<div>$(if($aWL -eq 4){"<span style='color:#3fb950'>&#x2705;</span>"}else{"<span style='color:#d29922'>&#x26A0;&#xFE0F;</span>"}) Todos os workloads ativos <span style='color:#484f58'>(Cobertura)</span></div>
 </div>
 </div>
 </div></div>
@@ -1076,7 +1104,7 @@ $tblRecs
 <div class="ft">
 <div class="brand">&#x1F6E1;&#xFE0F; <a href="https://github.com/rfranca777/DefenderXDR-RBAC-Audit-v2" target="_blank">Defender XDR RBAC Audit</a></div>
 <div class="brand" style="font-size:12px">Desenvolvido por <a href="https://github.com/rfranca777" target="_blank">Rafael Franca</a> | <a href="https://github.com/odefender" target="_blank">ODEFENDER</a></div>
-<div class="sub">Ferramenta open-source que complementa o Microsoft Defender XDR, dando visibilidade sobre quem tem acesso, que capacidades possui, e o que mudou. Nao substitui o portal -- agrega valor com analise de risco, recomendacoes CIS/NIST e Detection Rule pronta para o SOC.<br>MIT License | Gerado em $ts | PowerShell $($PSVersionTable.PSVersion) | Script v$scriptVersion</div>
+<div class="sub">Ferramenta open-source que complementa o Microsoft Defender XDR, dando visibilidade sobre quem tem acesso, que capacidades possui, e o que mudou. Nao substitui o portal -- agrega valor com analise de risco, recomendacoes CIS/NIST e Detection Rule pronta para o SOC.<br>MIT License | Gerado em $ts | PowerShell $($PSVersionTable.PSVersion) | Script v$scriptVersion<br><span style='color:#58a6ff'>&#x1F4C5; Proxima auditoria sugerida: $(([datetime]::Now).AddDays(30).ToString('yyyy-MM-dd'))</span> | Frequencia recomendada: mensal ou apos alteracoes de equipa</div>
 </div>
 
 </div></body></html>
