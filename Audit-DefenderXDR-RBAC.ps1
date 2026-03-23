@@ -23,7 +23,7 @@ param(
     [int]$DaysBack = 30
 )
 $ErrorActionPreference = "Stop"
-$scriptVersion = "2.1.0"
+$scriptVersion = "2.2.0"
 
 # =====================================================================
 # FUNCOES AUXILIARES
@@ -215,7 +215,7 @@ $permMatrix = @()
 foreach ($role in $dR.value) {
     $actions = @()
     foreach ($rp in $role.rolePermissions) { $actions += $rp.allowedResourceActions }
-    $row = @{RoleName=$role.displayName; Cats=@{}}
+    $row = @{RoleName=$role.displayName; Source="RBAC"; Cats=@{}}
     foreach ($cat in $permCatDefs) {
         $catActions = $actions | Where-Object { $_ -match $cat.Key }
         $hasManage = ($catActions | Where-Object { $_ -match 'manage' }).Count -gt 0
@@ -225,7 +225,22 @@ foreach ($role in $dR.value) {
     }
     $permMatrix += $row
 }
-Write-OK "$($permMatrix.Count) roles mapeadas em 4 categorias"
+# Entra ID Roles mapeadas para categorias RBAC (conforme docs Microsoft)
+$entraRoleMap = @(
+    @{RoleName="Global Administrator"; Source="Entra"; Cats=@{secops="manage";securityposture="manage";authorization="manage";dataops="manage"}},
+    @{RoleName="Security Administrator"; Source="Entra"; Cats=@{secops="manage";securityposture="manage";authorization="manage";dataops="-"}},
+    @{RoleName="Security Operator"; Source="Entra"; Cats=@{secops="manage";securityposture="read";authorization="-";dataops="-"}},
+    @{RoleName="Security Reader"; Source="Entra"; Cats=@{secops="read";securityposture="read";authorization="-";dataops="-"}},
+    @{RoleName="Global Reader"; Source="Entra"; Cats=@{secops="read";securityposture="read";authorization="read";dataops="-"}},
+    @{RoleName="Compliance Administrator"; Source="Entra"; Cats=@{secops="read";securityposture="-";authorization="-";dataops="-"}},
+    @{RoleName="Compliance Data Admin"; Source="Entra"; Cats=@{secops="read";securityposture="-";authorization="-";dataops="-"}}
+)
+# Adicionar somente Entra roles que tem pelo menos 1 membro
+foreach ($er in $entraRoleMap) {
+    $hasMember = ($rd | Where-Object { $_.Role -match $er.RoleName -and $_.Name -ne '(vazio)' }).Count
+    if ($hasMember -gt 0) { $permMatrix += $er }
+}
+Write-OK "$($permMatrix.Count) roles mapeadas em 4 categorias (RBAC + Entra)"
 
 # =====================================================================
 # 7. CAMINHOS DE ACESSO + CLASSIFICACAO DE RISCO
@@ -457,40 +472,52 @@ foreach ($role in $dR.value) {
 # -- Tabela S2: Matriz de Permissoes (visual rica)
 $tblPermMatrix = ""
 foreach ($pm in $permMatrix) {
-    $tblPermMatrix += "<tr><td style='color:#3fb950;font-weight:600'>$($pm.RoleName)</td>"
+    $srcBadge = if ($pm.Source -eq "RBAC") { "<span class='badge' style='background:#3fb95022;color:#3fb950'>RBAC</span>" } else { "<span class='badge' style='background:#58a6ff22;color:#58a6ff'>Entra</span>" }
+    $tblPermMatrix += "<tr><td style='font-weight:600'>$srcBadge <span style='color:$(if($pm.Source -eq "RBAC"){"#3fb950"}else{"#58a6ff"})'>$($pm.RoleName)</span></td>"
     foreach ($cat in $permCatDefs) {
         $lvl = $pm.Cats[$cat.Key]
         $cellStyle = if ($lvl -eq "manage") { "background:linear-gradient(135deg,#f8514930,#f8514910);color:#f85149;font-weight:700;border:1px solid #f8514940" } elseif ($lvl -eq "read") { "background:linear-gradient(135deg,#3fb95030,#3fb95010);color:#3fb950;font-weight:600;border:1px solid #3fb95040" } else { "color:#30363d" }
-        $cellIcon = if ($lvl -eq "manage") { "<div style='font-size:14px'>&#x1F534;</div><div style='font-size:9px;margin-top:2px'>MANAGE</div>" } elseif ($lvl -eq "read") { "<div style='font-size:14px'>&#x1F7E2;</div><div style='font-size:9px;margin-top:2px'>READ</div>" } else { "<div style='color:#30363d'>---</div>" }
-        $tblPermMatrix += "<td style='$cellStyle;text-align:center;padding:10px 8px;border-radius:6px'>$cellIcon</td>"
+        $cellIcon = if ($lvl -eq "manage") { "<div style='font-size:13px'>&#x1F534;</div><div style='font-size:9px;margin-top:1px'>MANAGE</div>" } elseif ($lvl -eq "read") { "<div style='font-size:13px'>&#x1F7E2;</div><div style='font-size:9px;margin-top:1px'>READ</div>" } else { "<div style='color:#30363d;font-size:10px'>---</div>" }
+        $tblPermMatrix += "<td style='$cellStyle;text-align:center;padding:8px 6px;border-radius:6px'>$cellIcon</td>"
     }
     $tblPermMatrix += "</tr>`n"
 }
 
-# -- Tabela S3: Risk Analysis (com barras visuais)
+# -- Tabela S3: Risk Analysis (com barras visuais + acao recomendada)
 $tblRisk = ""
 foreach ($entry in ($riskByPrincipal.GetEnumerator() | Sort-Object { $_.Value.Score } -Descending)) {
     $r = $entry.Value
     $rolesUnique = ($r.Roles | Select-Object -Unique) -join ", "
     $riskBadge = "<span class='badge' style='background:$($r.Color)22;color:$($r.Color)'>$($r.Icon) $($r.Level)</span>"
-    $pathsBadge = if ($r.Paths -gt 2) { "<span class='badge' style='background:#d2992233;color:#d29922'>$($r.Paths) caminhos</span>" } else { "$($r.Paths)" }
+    $pathsBadge = if ($r.Paths -gt 2) { "<span class='badge' style='background:#d2992233;color:#d29922'>&#x26A0; $($r.Paths) caminhos</span>" } else { "$($r.Paths)" }
     $scoreBar = "<div style='display:flex;align-items:center;gap:6px'><div style='width:$($r.Score)px;height:8px;background:$($r.Color);border-radius:4px;opacity:.7'></div><span style='color:$($r.Color);font-weight:700;font-size:12px'>$($r.Score)</span></div>"
-    $tblRisk += "<tr style='border-left:3px solid $($r.Color)'><td><b>$($entry.Key)</b></td><td>$riskBadge</td><td>$scoreBar</td><td style='text-align:center'>$pathsBadge</td><td class='sm'>$rolesUnique</td></tr>`n"
+    $pType = if ($rolesUnique -match 'servicePrincipal') { "SP" } else { "" }
+    $actionRec = switch ($r.Level) {
+        "CRITICAL" { if ($pType -eq "SP") { "Auditar necessidade. Rotacionar credenciais." } else { "Ativar PIM just-in-time. Revisar necessidade." } }
+        "HIGH" { "Aplicar least privilege. Considerar PIM." }
+        "MEDIUM" { "Validar escopo. Restringir workloads." }
+        "LOW" { "OK. Manter monitoramento." }
+        default { "Revisar." }
+    }
+    if ($r.Paths -gt 2) { $actionRec += " Consolidar caminhos." }
+    $tblRisk += "<tr style='border-left:3px solid $($r.Color)'><td><b>$($entry.Key)</b></td><td>$riskBadge</td><td>$scoreBar</td><td style='text-align:center'>$pathsBadge</td><td class='sm'>$rolesUnique</td><td style='font-size:10px;color:#8b949e'>$actionRec</td></tr>`n"
 }
 
-# -- SVG: Risk Gauge (distribuicao visual)
-$riskTotal = [Math]::Max($riskByPrincipal.Count, 1)
-$critPct = [Math]::Round(($critCount / $riskTotal) * 300)
-$highPct = [Math]::Round(($highCount / $riskTotal) * 300)
-$medPct = [Math]::Round(($medCount / $riskTotal) * 300)
-$lowPct = [Math]::Round(($lowCount / $riskTotal) * 300)
-$svgRisk = "<rect x='0' y='0' width='300' height='24' rx='12' fill='#161b22' stroke='#30363d' stroke-width='1'/>"
+# -- SVG: Risk Gauge (distribuicao visual - soma exata 300px)
+$riskTotalCount = $critCount + $highCount + $medCount + $lowCount
+if ($riskTotalCount -eq 0) { $riskTotalCount = 1 }
+$critPct = [Math]::Floor(($critCount / $riskTotalCount) * 300)
+$highPct = [Math]::Floor(($highCount / $riskTotalCount) * 300)
+$medPct = [Math]::Floor(($medCount / $riskTotalCount) * 300)
+$lowPct = 300 - $critPct - $highPct - $medPct
+if ($lowPct -lt 0) { $lowPct = 0 }
+$svgRisk = "<rect x='0' y='0' width='300' height='28' rx='14' fill='#161b22' stroke='#30363d' stroke-width='1'/>"
 $rx = 0
-if ($critPct -gt 0) { $svgRisk += "<rect x='$rx' y='0' width='$critPct' height='24' rx='$(if($rx -eq 0){12}else{0})' fill='#f85149' opacity='.85'><title>CRITICAL: $critCount</title></rect>"; $rx += $critPct }
-if ($highPct -gt 0) { $svgRisk += "<rect x='$rx' y='0' width='$highPct' height='24' fill='#ff7b72' opacity='.85'><title>HIGH: $highCount</title></rect>"; $rx += $highPct }
-if ($medPct -gt 0) { $svgRisk += "<rect x='$rx' y='0' width='$medPct' height='24' fill='#d29922' opacity='.85'><title>MEDIUM: $medCount</title></rect>"; $rx += $medPct }
-if ($lowPct -gt 0) { $svgRisk += "<rect x='$rx' y='0' width='$lowPct' height='24' fill='#3fb950' opacity='.85'><title>LOW: $lowCount</title></rect>" }
-$svgRisk += "<text x='150' y='16' fill='white' font-family='Segoe UI' font-size='10' text-anchor='middle' font-weight='700' style='text-shadow:0 1px 2px rgba(0,0,0,.5)'>$critCount CRITICAL / $highCount HIGH / $medCount MED / $lowCount LOW</text>"
+if ($critPct -gt 0) { $svgRisk += "<rect x='$rx' y='0' width='$critPct' height='28' rx='$(if($rx -eq 0){14}else{0})' fill='#f85149' opacity='.9'><title>CRITICAL: $critCount principals</title></rect>"; $rx += $critPct }
+if ($highPct -gt 0) { $svgRisk += "<rect x='$rx' y='0' width='$highPct' height='28' fill='#ff7b72' opacity='.9'><title>HIGH: $highCount principals</title></rect>"; $rx += $highPct }
+if ($medPct -gt 0) { $svgRisk += "<rect x='$rx' y='0' width='$medPct' height='28' fill='#d29922' opacity='.9'><title>MEDIUM: $medCount principals</title></rect>"; $rx += $medPct }
+if ($lowPct -gt 0 -and $lowCount -gt 0) { $svgRisk += "<rect x='$rx' y='0' width='$lowPct' height='28' fill='#3fb950' opacity='.9'><title>LOW: $lowCount principals</title></rect>" }
+$svgRisk += "<text x='150' y='18' fill='white' font-family='Segoe UI' font-size='11' text-anchor='middle' font-weight='700' style='text-shadow:0 1px 3px rgba(0,0,0,.8)'>$critCount CRITICAL  |  $highCount HIGH  |  $medCount MEDIUM  |  $lowCount LOW</text>"
 
 # -- Tabela S4: Evidencias RBAC
 $tblEvidence = ""
@@ -777,44 +804,67 @@ tr:hover{background:#1c2128}
 
 <!-- KPI CARDS -->
 <div class="cds">
-<div class="cd c2"><div class="n">$($dR.value.Count)</div><div class="l">Custom Roles<br>Unified RBAC</div></div>
 <div class="cd c4"><div class="n">$critCount</div><div class="l">Principals<br>Risco CRITICAL</div></div>
+<div class="cd c2"><div class="n">$($dR.value.Count)</div><div class="l">Custom Roles<br>Unified RBAC</div></div>
 <div class="cd c1"><div class="n">$tRA</div><div class="l">Entra ID Roles<br>Ativas</div></div>
 <div class="cd c3"><div class="n">$totalRbacChanges</div><div class="l">Alteracoes RBAC<br>($DaysBack dias)</div></div>
 <div class="cd c5"><div class="n">$aWL<span style='font-size:14px;color:#6e7681'>/4</span></div><div class="l">Workloads<br>Ativos</div></div>
 <div class="cd c6"><div class="n">$($recommendations.Count)</div><div class="l">Recomendacoes<br>CIS/NIST</div></div>
 </div>
 
+<!-- EXECUTIVE SUMMARY -->
+<div class="sc"><div class="st" style="background:linear-gradient(90deg,#21262d,#1a2233)">&#x1F3AF; Resumo Executivo -- O que precisa da sua atencao</div><div class="sb">
+<svg viewBox="0 0 300 28" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:900px;height:32px;margin-bottom:14px">$svgRisk</svg>
+<div class="gr" style="gap:12px">
+<div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px">
+<h4 style="color:#f85149;font-size:12px;margin-bottom:8px">&#x1F6A8; Achados Criticos</h4>
+<ul style="list-style:none;padding:0;font-size:11px;line-height:2">
+$(if($critCount -gt 2){"<li style='color:#f85149'>&#x25CF; <b>$critCount principals CRITICAL</b> -- acesso total ao XDR, rever imediatamente</li>"})
+$(if($nS -gt 0){"<li style='color:#d29922'>&#x25CF; <b>$nS Service Principal(s)</b> com acesso privilegiado -- validar e rotacionar</li>"})
+$(if($gaCount -gt 2){"<li style='color:#f85149'>&#x25CF; <b>$gaCount Global Admins</b> -- excede limite CIS (max 2). Usar PIM.</li>"})
+$(if($totalRbacChanges -gt 0){"<li style='color:#d29922'>&#x25CF; <b>$totalRbacChanges alteracoes RBAC</b> nos ultimos $DaysBack dias</li>"}else{"<li style='color:#3fb950'>&#x25CF; Nenhuma alteracao RBAC -- estabilidade confirmada</li>"})
+$(if($multiPathPrincipals -gt 0){"<li style='color:#d29922'>&#x25CF; <b>$multiPathPrincipals principal(s)</b> com 3+ caminhos de acesso -- dificulta revogacao</li>"})
+</ul>
+</div>
+<div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px">
+<h4 style="color:#3fb950;font-size:12px;margin-bottom:8px">&#x2705; Status dos Workloads</h4>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px">
+$(foreach($w in $wl){"<div style='display:flex;align-items:center;gap:6px'><span style='color:$(if($w.A){'#3fb950'}else{'#f85149'});font-size:14px'>$(if($w.A){'&#x25CF;'}else{'&#x25CB;'})</span><span style='color:$(if($w.A){'#c9d1d9'}else{'#6e7681'})'>$($w.N) -- $($w.F)</span></div>`n"})
+</div>
+<div style="margin-top:10px;font-size:10px;color:#6e7681">$aWL/4 workloads com dados no Advanced Hunting. Workloads inativos nao geram eventos no KQL.</div>
+</div>
+</div>
+</div></div>
+
 <!-- S1: RBAC CUSTOM ROLES -->
-<div class="sc"><div class="st" style="background:#1a2e1a">&#x1F512; 1. RBAC do Defender XDR -- Custom Roles e Assignments<a href="$($portal.Perms)" target="_blank">Permissions &#x2192;</a></div><div class="sb">
+<div class="sc"><div class="st" style="background:#1a2e1a">&#x1F512; 1. Custom Roles do Defender XDR -- Quem tem acesso ao que?<a href="$($portal.Perms)" target="_blank">Permissions &#x2192;</a></div><div class="sb">
 <div class="rt" style="border-left-color:#3fb950;padding:8px 14px"><b>$($dR.value.Count)</b> custom role(s), <b>$($dGrp.Count)</b> grupo(s), <b>$tRB</b> assignment(s). Roles atribuidas a grupos Entra ID -- membros herdam permissoes. &#x1F517; <a href="$($portal.Perms)" target="_blank">Portal</a> | <a href="https://learn.microsoft.com/defender-xdr/custom-permissions-details" target="_blank">Docs</a></div>
 <div style="overflow-x:auto"><table style="min-width:950px"><thead><tr><th style="min-width:140px">Custom Role</th><th style="min-width:220px">Permissoes</th><th style="min-width:200px">Atribuida a</th><th style="min-width:150px">Escopo</th><th style="min-width:220px">Membros (acesso efetivo)</th></tr></thead><tbody>
 $tblRbac
 </tbody></table></div></div></div>
 
 <!-- S2: PERMISSION CATEGORIES MATRIX -->
-<div class="sc"><div class="st">&#x1F4CB; 2. Matriz de Permissoes por Categoria RBAC<a href="https://learn.microsoft.com/defender-xdr/custom-permissions-details" target="_blank">Docs &#x2192;</a></div><div class="sb">
-<div class="rt" style="padding:8px 14px"><span style="color:#f85149">&#x1F534; MANAGE</span> = leitura + escrita + acoes | <span style="color:#3fb950">&#x1F7E2; READ</span> = somente leitura. 4 categorias: SecOps, Posture, Auth/Settings, DataOps.</div>
-<div style="overflow-x:auto"><table style="min-width:700px"><thead><tr><th style="min-width:160px">Custom Role</th><th style="min-width:120px;text-align:center">&#x1F6E1;&#xFE0F; Security Ops</th><th style="min-width:120px;text-align:center">&#x1F4CA; Sec. Posture</th><th style="min-width:120px;text-align:center">&#x2699;&#xFE0F; Auth/Settings</th><th style="min-width:120px;text-align:center">&#x1F4BE; Data Ops</th></tr></thead><tbody>
+<div class="sc"><div class="st">&#x1F4CB; 2. Quem pode fazer o que? -- Matriz de Permissoes<a href="https://learn.microsoft.com/defender-xdr/custom-permissions-details" target="_blank">Docs &#x2192;</a></div><div class="sb">
+<div class="rt" style="padding:8px 14px"><span style="color:#f85149">&#x1F534; MANAGE</span> = leitura + escrita + acoes | <span style="color:#3fb950">&#x1F7E2; READ</span> = somente leitura. <span class='badge' style='background:#3fb95022;color:#3fb950'>RBAC</span> = Custom Role do Defender | <span class='badge' style='background:#58a6ff22;color:#58a6ff'>Entra</span> = Role do Entra ID</div>
+<div style="overflow-x:auto"><table style="min-width:750px"><thead><tr><th style="min-width:200px">Role (Fonte)</th><th style="min-width:110px;text-align:center">&#x1F6E1;&#xFE0F; Security Ops</th><th style="min-width:110px;text-align:center">&#x1F4CA; Posture</th><th style="min-width:110px;text-align:center">&#x2699;&#xFE0F; Auth/Settings</th><th style="min-width:110px;text-align:center">&#x1F4BE; Data Ops</th></tr></thead><tbody>
 $tblPermMatrix
 </tbody></table></div></div></div>
 
 <!-- S3: RISK ANALYSIS -->
-<div class="sc"><div class="st">&#x26A0;&#xFE0F; 3. Analise de Risco por Principal</div><div class="sb">
-<svg viewBox="0 0 300 24" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:800px;height:28px;margin-bottom:12px">$svgRisk</svg>
-<div class="rt" style="padding:8px 14px">Score por <b>maior privilegio</b>. <span style="color:#f85149">&#x1F534; CRITICAL</span> Global/Sec Admin | <span style="color:#ff7b72">&#x1F7E0; HIGH</span> Operator/SecOps manage | <span style="color:#d29922">&#x1F7E1; MEDIUM</span> Posture/Config | <span style="color:#3fb950">&#x1F7E2; LOW</span> Read-only</div>
-<div style="overflow-x:auto"><table style="min-width:750px"><thead><tr><th style="min-width:180px">Principal</th><th style="min-width:120px">Nivel de Risco</th><th style="min-width:60px;text-align:center">Score</th><th style="min-width:80px;text-align:center">Caminhos</th><th style="min-width:250px">Roles/RBAC</th></tr></thead><tbody>
+<div class="sc"><div class="st" style="background:#2d1a1a">&#x26A0;&#xFE0F; 3. Quem tem acesso demais? -- Analise de Risco<a href="$($portal.PIM)" target="_blank">PIM &#x2192;</a></div><div class="sb">
+<div class="rt" style="padding:8px 14px"><span style="color:#f85149">&#x1F534; CRITICAL</span> = acesso total irrestrito | <span style="color:#ff7b72">&#x1F7E0; HIGH</span> = manage secops | <span style="color:#d29922">&#x1F7E1; MEDIUM</span> = manage posture/config | <span style="color:#3fb950">&#x1F7E2; LOW</span> = read-only</div>
+<div style="overflow-x:auto"><table style="min-width:900px"><thead><tr><th style="min-width:180px">Principal</th><th style="min-width:100px">Risco</th><th style="min-width:120px">Score</th><th style="min-width:70px;text-align:center">Caminhos</th><th style="min-width:200px">Roles</th><th style="min-width:180px">Acao Recomendada</th></tr></thead><tbody>
 $tblRisk
 </tbody></table></div></div></div>
 
 <!-- S4: EVIDENCE -->
-<div class="sc"><div class="st">&#x1F6A8; 4. Evidencias de Alteracao RBAC<a href="$($portal.Audit)" target="_blank">Audit Log &#x2192;</a></div><div class="sb">
+<div class="sc"><div class="st">&#x1F6A8; 4. Quem alterou o RBAC? -- Evidencias<a href="$($portal.Audit)" target="_blank">Audit Log &#x2192;</a></div><div class="sb">
 <div class="rt" style="padding:8px 14px"><b>$totalRbacChanges</b> alteracoes. <span style="color:#3fb950">&#x2795; add</span> <span style="color:#f85149">&#x274C; remove</span> <span style="color:#d29922">&#x270F;&#xFE0F; edit</span>$(if($dGrp.Count -gt 0){" | Grupos RBAC: <b>$($dGrp -join ', ')</b>"}) | <a href="$($portal.Audit)" target="_blank">Audit Log</a></div>
 $(if($tblEvidence){"<div style='overflow-x:auto'><table style='min-width:850px'><thead><tr><th style='min-width:130px'>Quando</th><th style='min-width:150px'>Acao</th><th style='min-width:140px'>Quem Fez</th><th style='min-width:150px'>Role</th><th style='min-width:180px'>Alvo</th><th style='min-width:120px'>IP / Pais</th></tr></thead><tbody>$tblEvidence</tbody></table></div>"}else{"<div style='background:#21262d;border-radius:8px;padding:18px;text-align:center'><span style='color:#3fb950;font-size:16px'>&#x2705;</span><br><span style='color:#8b949e'>Nenhuma alteracao RBAC nos ultimos $DaysBack dias -- estabilidade nas permissoes.</span></div>"})
 </div></div>
 
-<!-- S5: ENTRA ID ROLES (complementar) -->
-<div class="sc"><div class="st">&#x1F511; 5. Caminhos de Acesso ao Defender XDR<a href="$($portal.Entra)" target="_blank">Entra ID &#x2192;</a></div><div class="sb">
+<!-- S5: ACCESS PATHS -->
+<div class="sc"><div class="st">&#x1F511; 5. Todos os caminhos de acesso ao XDR<a href="$($portal.Entra)" target="_blank">Entra ID &#x2192;</a></div><div class="sb">
 <div class="rt" style="padding:8px 14px"><b>$uniquePrincipals</b> principals, <b>$($accessPaths.Count)</b> caminhos. $nU users, $nG groups, $nS SPs.$(if($nS -gt 2){" &#x26A0;&#xFE0F; <b>$nS SPs privilegiados!</b>"}) Entra Roles + RBAC combinados. <a href="$($portal.Entra)" target="_blank">Entra</a> | <a href="$($portal.Perms)" target="_blank">RBAC</a></div>
 <div style="max-height:500px;overflow:auto"><table style="min-width:850px"><thead><tr><th style="min-width:200px">Principal</th><th style="min-width:110px">Tipo</th><th style="min-width:110px">Risco</th><th style="min-width:200px">Role / RBAC</th><th style="min-width:200px">Caminho</th></tr></thead><tbody>
 $tblAccess
@@ -831,7 +881,7 @@ $svg1
 </svg></div></div>
 
 <!-- S7: EVENTS -->
-<div class="sc"><div class="st">&#x1F50D; 7. Eventos que Alteram o RBAC ($DaysBack dias)<a href="$($portal.Hunt)" target="_blank">Hunting &#x2192;</a></div><div class="sb">
+<div class="sc"><div class="st">&#x1F50D; 7. Log completo de eventos RBAC ($DaysBack dias)<a href="$($portal.Hunt)" target="_blank">Hunting &#x2192;</a></div><div class="sb">
 <div class="rt" style="padding:6px 14px;font-size:10px">Borda <span style="color:#f85149">&#x25CF;</span> = alto impacto (role/RBAC) | <span style="color:#d29922">&#x25CF;</span> = medio (grupo). Verifique: conta esperada? horario normal? IP conhecido?</div>
 $(if($tblEv){"<div style='max-height:420px;overflow:auto'><table style='min-width:1000px'><thead><tr><th style='min-width:130px'>Timestamp</th><th style='min-width:120px'>Cenario</th><th style='min-width:160px'>Acao</th><th style='min-width:140px'>Quem Fez</th><th style='min-width:220px'>Detalhe</th><th style='min-width:120px'>Alvo</th><th style='min-width:130px'>IP / Pais</th></tr></thead><tbody>$tblEv</tbody></table></div>"}else{"<p style='color:#6e7681'>Nenhum evento nos ultimos $DaysBack dias.</p>"})
 </div></div>
@@ -853,7 +903,7 @@ $(if($tblEv){"<div style='max-height:420px;overflow:auto'><table style='min-widt
 </div></div>
 
 <!-- S9: DETECTION RULE -->
-<div class="sc"><div class="st">&#x1F6A8; 9. Detection Rule -- Monitoramento Continuo do RBAC</div><div class="sb">
+<div class="sc"><div class="st" style="background:#1a2e2e">&#x1F6A8; 9. Como automatizar? -- Detection Rule para o SOC</div><div class="sb">
 <div class="rt" style="padding:8px 14px">Query para <b>alerta automatico</b> no SOC.$(if($dGrp.Count -gt 0){" Grupos: <b>$($dGrp -join ', ')</b>."}) Crie a Detection Rule abaixo.</div>
 <div class="ins"><h3>Passo a passo -- Detection Rule</h3><ol>
 <li>Abrir <a href="$($portal.Hunt)" target="_blank" style="color:#58a6ff">Advanced Hunting</a></li>
@@ -873,7 +923,7 @@ $(if($tblEv){"<div style='max-height:420px;overflow:auto'><table style='min-widt
 </div></div>
 
 <!-- S10: RECOMMENDATIONS -->
-<div class="sc"><div class="st">&#x1F4DD; 10. Recomendacoes (CIS / NIST / Microsoft PAR)</div><div class="sb">
+<div class="sc"><div class="st">&#x1F4DD; 10. O que fazer? -- Recomendacoes CIS / NIST</div><div class="sb">
 <div class="rt" style="padding:8px 14px">Baseadas nos achados reais. Ref: <b>CIS Benchmark</b>, <b>NIST SP 800-53</b>, <b>Microsoft PAR</b>. Links diretos ao portal.</div>
 <div style="overflow-x:auto"><table style="min-width:900px"><thead><tr><th style="min-width:80px">Severidade</th><th style="min-width:100px">Categoria</th><th style="min-width:200px">Achado</th><th style="min-width:280px">Recomendacao</th><th style="min-width:150px">Referencia</th></tr></thead><tbody>
 $tblRecs
