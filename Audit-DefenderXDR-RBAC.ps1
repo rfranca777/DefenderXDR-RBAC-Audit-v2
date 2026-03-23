@@ -23,7 +23,7 @@ param(
     [int]$DaysBack = 30
 )
 $ErrorActionPreference = "Stop"
-$scriptVersion = "2.3.0"
+$scriptVersion = "2.4.0"
 
 # =====================================================================
 # FUNCOES AUXILIARES
@@ -215,7 +215,22 @@ $permMatrix = @()
 foreach ($role in $dR.value) {
     $actions = @()
     foreach ($rp in $role.rolePermissions) { $actions += $rp.allowedResourceActions }
-    $row = @{RoleName=$role.displayName; Source="RBAC"; Cats=@{}}
+    # Determinar workloads cobertos pelo assignment
+    $roleAssignments = $dA.value | Where-Object { $_.roleDefinitionId -eq $role.id }
+    $wlScope = @()
+    if ($roleAssignments.Count -gt 0) {
+        foreach ($ra in $roleAssignments) {
+            if ($ra.appScopeIds -contains "/") { $wlScope = @("MDE","MDO","MDI","MDCA"); break }
+            foreach ($sid in $ra.appScopeIds) {
+                if ($sid -match 'mde|endpoint') { $wlScope += "MDE" }
+                if ($sid -match 'mdo|office') { $wlScope += "MDO" }
+                if ($sid -match 'mdi|identity') { $wlScope += "MDI" }
+                if ($sid -match 'mdca|cloud') { $wlScope += "MDCA" }
+            }
+        }
+    }
+    if ($wlScope.Count -eq 0) { $wlScope = @("(sem assignment)") }
+    $row = @{RoleName=$role.displayName; Source="RBAC"; Cats=@{}; Workloads=($wlScope | Select-Object -Unique)}
     foreach ($cat in $permCatDefs) {
         $catActions = $actions | Where-Object { $_ -match $cat.Key }
         $hasManage = ($catActions | Where-Object { $_ -match 'manage' }).Count -gt 0
@@ -226,21 +241,22 @@ foreach ($role in $dR.value) {
     $permMatrix += $row
 }
 # Entra ID Roles mapeadas para categorias RBAC (conforme docs Microsoft)
+# Entra roles SEMPRE aplicam a TODOS os workloads (nao ha scoping por workload)
 $entraRoleMap = @(
-    @{RoleName="Global Administrator"; Source="Entra"; Cats=@{secops="manage";securityposture="manage";authorization="manage";dataops="manage"}},
-    @{RoleName="Security Administrator"; Source="Entra"; Cats=@{secops="manage";securityposture="manage";authorization="manage";dataops="-"}},
-    @{RoleName="Security Operator"; Source="Entra"; Cats=@{secops="manage";securityposture="read";authorization="-";dataops="-"}},
-    @{RoleName="Security Reader"; Source="Entra"; Cats=@{secops="read";securityposture="read";authorization="-";dataops="-"}},
-    @{RoleName="Global Reader"; Source="Entra"; Cats=@{secops="read";securityposture="read";authorization="read";dataops="-"}},
-    @{RoleName="Compliance Administrator"; Source="Entra"; Cats=@{secops="read";securityposture="-";authorization="-";dataops="-"}},
-    @{RoleName="Compliance Data Admin"; Source="Entra"; Cats=@{secops="read";securityposture="-";authorization="-";dataops="-"}}
+    @{RoleName="Global Administrator"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); Cats=@{secops="manage";securityposture="manage";authorization="manage";dataops="manage"}},
+    @{RoleName="Security Administrator"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); Cats=@{secops="manage";securityposture="manage";authorization="manage";dataops="-"}},
+    @{RoleName="Security Operator"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); Cats=@{secops="manage";securityposture="read";authorization="-";dataops="-"}},
+    @{RoleName="Security Reader"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); Cats=@{secops="read";securityposture="read";authorization="-";dataops="-"}},
+    @{RoleName="Global Reader"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); Cats=@{secops="read";securityposture="read";authorization="read";dataops="-"}},
+    @{RoleName="Compliance Administrator"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); Cats=@{secops="read";securityposture="-";authorization="-";dataops="-"}},
+    @{RoleName="Compliance Data Admin"; Source="Entra"; Workloads=@("MDE","MDO","MDI","MDCA"); Cats=@{secops="read";securityposture="-";authorization="-";dataops="-"}}
 )
 # Adicionar somente Entra roles que tem pelo menos 1 membro
 foreach ($er in $entraRoleMap) {
     $hasMember = ($rd | Where-Object { $_.Role -match $er.RoleName -and $_.Name -ne '(vazio)' }).Count
     if ($hasMember -gt 0) { $permMatrix += $er }
 }
-Write-OK "$($permMatrix.Count) roles mapeadas em 4 categorias (RBAC + Entra)"
+Write-OK "$($permMatrix.Count) roles mapeadas em 4 categorias + workloads (RBAC + Entra)"
 
 # =====================================================================
 # 7. CAMINHOS DE ACESSO + CLASSIFICACAO DE RISCO
@@ -469,7 +485,9 @@ foreach ($role in $dR.value) {
     }
 }
 
-# -- Tabela S2: Matriz de Permissoes (com linguagem humana)
+# -- Tabela S2: Matriz de Permissoes (com workloads + linguagem humana)
+$wlColors = @{"MDE"="#4fc3f7";"MDO"="#81c784";"MDI"="#ffb74d";"MDCA"="#ce93d8"}
+$wlTips = @{"MDE"="Defender for Endpoint";"MDO"="Defender for Office 365";"MDI"="Defender for Identity";"MDCA"="Defender for Cloud Apps"}
 $tblPermMatrix = ""
 foreach ($pm in $permMatrix) {
     $srcBadge = if ($pm.Source -eq "RBAC") { "<span class='badge' style='background:#3fb95022;color:#3fb950'>RBAC</span>" } else { "<span class='badge' style='background:#58a6ff22;color:#58a6ff'>Entra</span>" }
@@ -481,7 +499,16 @@ foreach ($pm in $permMatrix) {
         $mCount = ($rd | Where-Object { $_.Role -eq $pm.RoleName -and $_.Name -ne '(vazio)' }).Count
     }
     $mBadge = if ($mCount -gt 0) { "<span class='badge' style='background:#58a6ff15;color:#58a6ff;margin-left:4px'>$mCount</span>" } else { "<span style='color:#30363d;font-size:9px;margin-left:4px'>0</span>" }
-    $tblPermMatrix += "<tr><td style='font-weight:600'>$srcBadge <span style='color:$(if($pm.Source -eq "RBAC"){"#3fb950"}else{"#58a6ff"})'>$($pm.RoleName)</span>$mBadge</td>"
+    # Workload dots
+    $wlDots = ""
+    foreach ($wn in @("MDE","MDO","MDI","MDCA")) {
+        $isActive = $pm.Workloads -contains $wn
+        $dotColor = if ($isActive) { $wlColors[$wn] } else { "#30363d" }
+        $dotOp = if ($isActive) { "1" } else { ".3" }
+        $tipText = if ($isActive) { "$($wlTips[$wn]) -- COBERTO" } else { "$($wlTips[$wn]) -- sem acesso" }
+        $wlDots += "<span title='$tipText' style='color:$dotColor;opacity:$dotOp;font-size:11px;margin:0 1px;cursor:help'>&#x25CF;</span>"
+    }
+    $tblPermMatrix += "<tr><td style='font-weight:600'>$srcBadge <span style='color:$(if($pm.Source -eq "RBAC"){"#3fb950"}else{"#58a6ff"})'>$($pm.RoleName)</span>$mBadge</td><td style='text-align:center;white-space:nowrap'>$wlDots</td>"
     foreach ($cat in $permCatDefs) {
         $lvl = $pm.Cats[$cat.Key]
         $manageLabel = if ($lvl -eq "manage") { "Sim, controle total" } elseif ($lvl -eq "read") { "Somente visualizar" } else { "Sem acesso" }
@@ -854,8 +881,8 @@ $tblRbac
 
 <!-- S2: PERMISSION CATEGORIES MATRIX -->
 <div class="sc"><div class="st">&#x1F4CB; 2. Quem pode fazer o que? -- Capacidades por Role<a href="https://learn.microsoft.com/defender-xdr/custom-permissions-details" target="_blank">Docs &#x2192;</a></div><div class="sb">
-<div class="rt" style="padding:8px 14px"><span style="color:#f85149">&#x1F534; CONTROLE TOTAL</span> = pode ver, agir e modificar | <span style="color:#3fb950">&#x1F7E2; SO VISUALIZA</span> = acesso somente leitura | &#x2716; = sem acesso. Badge numerico = principals com esta role.</div>
-<div style="overflow-x:auto"><table style="min-width:800px"><thead><tr><th style="min-width:220px">Role <span style='font-weight:400;color:#6e7681'>(membros)</span></th><th style="min-width:130px;text-align:center" title="Pode responder a alertas, investigar incidents, executar acoes de resposta?">&#x1F6A8; Responder a<br>Incidentes</th><th style="min-width:130px;text-align:center" title="Pode ver e corrigir vulnerabilidades, Secure Score, baselines?">&#x1F50D; Gerir<br>Vulnerabilidades</th><th style="min-width:130px;text-align:center" title="PERIGO: pode criar roles, alterar configuracoes, dar acesso a outros?">&#x1F511; Alterar<br>Permissoes</th><th style="min-width:130px;text-align:center" title="Pode aceder a dados brutos, data lake Sentinel, retencao?">&#x1F4BE; Aceder<br>a Dados</th></tr></thead><tbody>
+<div class="rt" style="padding:8px 14px"><span style="color:#f85149">&#x1F534; CONTROLE TOTAL</span> = pode ver, agir e modificar | <span style="color:#3fb950">&#x1F7E2; SO VISUALIZA</span> = somente leitura | &#x2716; = sem acesso. Workloads: <span style='color:#4fc3f7'>&#x25CF;</span>MDE <span style='color:#81c784'>&#x25CF;</span>MDO <span style='color:#ffb74d'>&#x25CF;</span>MDI <span style='color:#ce93d8'>&#x25CF;</span>MDCA</div>
+<div style="overflow-x:auto"><table style="min-width:900px"><thead><tr><th style="min-width:220px">Role <span style='font-weight:400;color:#6e7681'>(membros)</span></th><th style="min-width:80px;text-align:center" title="Workloads cobertos: MDE, MDO, MDI, MDCA">Workloads</th><th style="min-width:120px;text-align:center" title="Pode responder a alertas, investigar incidents, executar acoes de resposta?">&#x1F6A8; Responder a<br>Incidentes</th><th style="min-width:120px;text-align:center" title="Pode ver e corrigir vulnerabilidades, Secure Score, baselines?">&#x1F50D; Gerir<br>Vulnerabilidades</th><th style="min-width:120px;text-align:center" title="PERIGO: pode criar roles, alterar configuracoes, dar acesso a outros?">&#x1F511; Alterar<br>Permissoes</th><th style="min-width:120px;text-align:center" title="Pode aceder a dados brutos, data lake Sentinel, retencao?">&#x1F4BE; Aceder<br>a Dados</th></tr></thead><tbody>
 $tblPermMatrix
 </tbody></table></div></div></div>
 
