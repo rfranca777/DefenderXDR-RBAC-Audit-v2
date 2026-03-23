@@ -23,7 +23,7 @@ param(
     [int]$DaysBack = 30
 )
 $ErrorActionPreference = "Stop"
-$scriptVersion = "2.2.0"
+$scriptVersion = "2.3.0"
 
 # =====================================================================
 # FUNCOES AUXILIARES
@@ -205,10 +205,10 @@ try {
 # =====================================================================
 Write-Step "Mapeando categorias de permissao..."
 $permCatDefs = @(
-    @{Key="secops";        Name="Security Operations"; Desc="Incidents, alerts, response actions, live response, hunting"; Color="#f85149"; Icon="&#x1F6E1;&#xFE0F;"}
-    @{Key="securityposture"; Name="Security Posture";    Desc="Vulnerability mgmt, baselines, Secure Score, exposure"; Color="#d29922"; Icon="&#x1F4CA;"}
-    @{Key="authorization";  Name="Authorization/Settings"; Desc="Role mgmt, system settings, detection tuning"; Color="#58a6ff"; Icon="&#x2699;&#xFE0F;"}
-    @{Key="dataops";        Name="Data Operations";     Desc="Data retention, Sentinel data lake, analytics jobs"; Color="#3fb950"; Icon="&#x1F4BE;"}
+    @{Key="secops";         Name="Responder a Incidentes"; Short="Incidents"; Desc="Pode ver/agir em alertas, incidents, hunting, live response, quarentena de email"; Tip="Quem responde quando ha um ataque? MANAGE = investiga e age. READ = so visualiza."; Color="#f85149"; Icon="&#x1F6A8;"}
+    @{Key="securityposture"; Name="Gerir Vulnerabilidades"; Short="Posture"; Desc="Pode ver/agir em TVM, Secure Score, baselines, exposure management"; Tip="Quem corrige vulnerabilidades? MANAGE = cria tickets e aplica. READ = so ve."; Color="#d29922"; Icon="&#x1F50D;"}
+    @{Key="authorization";  Name="Alterar Permissoes";     Short="Config"; Desc="Pode criar/editar roles, configurar deteccoes, alterar settings do portal"; Tip="PERIGO: quem tem MANAGE aqui pode dar acesso a si proprio. Monitorar sempre."; Color="#58a6ff"; Icon="&#x1F511;"}
+    @{Key="dataops";        Name="Aceder a Dados";         Short="Dados"; Desc="Pode gerir retencao, data lake Sentinel, tabelas, connectors"; Tip="Controla dados brutos. MANAGE = pode apagar ou mover dados. READ = consulta."; Color="#3fb950"; Icon="&#x1F4BE;"}
 )
 
 $permMatrix = @()
@@ -469,15 +469,24 @@ foreach ($role in $dR.value) {
     }
 }
 
-# -- Tabela S2: Matriz de Permissoes (visual rica)
+# -- Tabela S2: Matriz de Permissoes (com linguagem humana)
 $tblPermMatrix = ""
 foreach ($pm in $permMatrix) {
     $srcBadge = if ($pm.Source -eq "RBAC") { "<span class='badge' style='background:#3fb95022;color:#3fb950'>RBAC</span>" } else { "<span class='badge' style='background:#58a6ff22;color:#58a6ff'>Entra</span>" }
-    $tblPermMatrix += "<tr><td style='font-weight:600'>$srcBadge <span style='color:$(if($pm.Source -eq "RBAC"){"#3fb950"}else{"#58a6ff"})'>$($pm.RoleName)</span></td>"
+    # Contar membros desta role
+    $mCount = 0
+    if ($pm.Source -eq "RBAC") {
+        $mCount = ($rb | Where-Object { $_.CR -eq $pm.RoleName -and $_.To -ne '(vazio)' -and $_.To -ne '(indisponivel)' }).Count
+    } else {
+        $mCount = ($rd | Where-Object { $_.Role -eq $pm.RoleName -and $_.Name -ne '(vazio)' }).Count
+    }
+    $mBadge = if ($mCount -gt 0) { "<span class='badge' style='background:#58a6ff15;color:#58a6ff;margin-left:4px'>$mCount</span>" } else { "<span style='color:#30363d;font-size:9px;margin-left:4px'>0</span>" }
+    $tblPermMatrix += "<tr><td style='font-weight:600'>$srcBadge <span style='color:$(if($pm.Source -eq "RBAC"){"#3fb950"}else{"#58a6ff"})'>$($pm.RoleName)</span>$mBadge</td>"
     foreach ($cat in $permCatDefs) {
         $lvl = $pm.Cats[$cat.Key]
+        $manageLabel = if ($lvl -eq "manage") { "Sim, controle total" } elseif ($lvl -eq "read") { "Somente visualizar" } else { "Sem acesso" }
         $cellStyle = if ($lvl -eq "manage") { "background:linear-gradient(135deg,#f8514930,#f8514910);color:#f85149;font-weight:700;border:1px solid #f8514940" } elseif ($lvl -eq "read") { "background:linear-gradient(135deg,#3fb95030,#3fb95010);color:#3fb950;font-weight:600;border:1px solid #3fb95040" } else { "color:#30363d" }
-        $cellIcon = if ($lvl -eq "manage") { "<div style='font-size:13px'>&#x1F534;</div><div style='font-size:9px;margin-top:1px'>MANAGE</div>" } elseif ($lvl -eq "read") { "<div style='font-size:13px'>&#x1F7E2;</div><div style='font-size:9px;margin-top:1px'>READ</div>" } else { "<div style='color:#30363d;font-size:10px'>---</div>" }
+        $cellIcon = if ($lvl -eq "manage") { "<div title='$manageLabel' style='cursor:help'><div style='font-size:12px'>&#x1F534;</div><div style='font-size:8px;margin-top:1px'>CONTROLE TOTAL</div></div>" } elseif ($lvl -eq "read") { "<div title='$manageLabel' style='cursor:help'><div style='font-size:12px'>&#x1F7E2;</div><div style='font-size:8px;margin-top:1px'>SO VISUALIZA</div></div>" } else { "<div title='Sem acesso a esta area' style='color:#30363d;font-size:10px;cursor:help'>&#x2716;</div>" }
         $tblPermMatrix += "<td style='$cellStyle;text-align:center;padding:8px 6px;border-radius:6px'>$cellIcon</td>"
     }
     $tblPermMatrix += "</tr>`n"
@@ -844,15 +853,15 @@ $tblRbac
 </tbody></table></div></div></div>
 
 <!-- S2: PERMISSION CATEGORIES MATRIX -->
-<div class="sc"><div class="st">&#x1F4CB; 2. Quem pode fazer o que? -- Matriz de Permissoes<a href="https://learn.microsoft.com/defender-xdr/custom-permissions-details" target="_blank">Docs &#x2192;</a></div><div class="sb">
-<div class="rt" style="padding:8px 14px"><span style="color:#f85149">&#x1F534; MANAGE</span> = leitura + escrita + acoes | <span style="color:#3fb950">&#x1F7E2; READ</span> = somente leitura. <span class='badge' style='background:#3fb95022;color:#3fb950'>RBAC</span> = Custom Role do Defender | <span class='badge' style='background:#58a6ff22;color:#58a6ff'>Entra</span> = Role do Entra ID</div>
-<div style="overflow-x:auto"><table style="min-width:750px"><thead><tr><th style="min-width:200px">Role (Fonte)</th><th style="min-width:110px;text-align:center">&#x1F6E1;&#xFE0F; Security Ops</th><th style="min-width:110px;text-align:center">&#x1F4CA; Posture</th><th style="min-width:110px;text-align:center">&#x2699;&#xFE0F; Auth/Settings</th><th style="min-width:110px;text-align:center">&#x1F4BE; Data Ops</th></tr></thead><tbody>
+<div class="sc"><div class="st">&#x1F4CB; 2. Quem pode fazer o que? -- Capacidades por Role<a href="https://learn.microsoft.com/defender-xdr/custom-permissions-details" target="_blank">Docs &#x2192;</a></div><div class="sb">
+<div class="rt" style="padding:8px 14px"><span style="color:#f85149">&#x1F534; CONTROLE TOTAL</span> = pode ver, agir e modificar | <span style="color:#3fb950">&#x1F7E2; SO VISUALIZA</span> = acesso somente leitura | &#x2716; = sem acesso. Badge numerico = principals com esta role.</div>
+<div style="overflow-x:auto"><table style="min-width:800px"><thead><tr><th style="min-width:220px">Role <span style='font-weight:400;color:#6e7681'>(membros)</span></th><th style="min-width:130px;text-align:center" title="Pode responder a alertas, investigar incidents, executar acoes de resposta?">&#x1F6A8; Responder a<br>Incidentes</th><th style="min-width:130px;text-align:center" title="Pode ver e corrigir vulnerabilidades, Secure Score, baselines?">&#x1F50D; Gerir<br>Vulnerabilidades</th><th style="min-width:130px;text-align:center" title="PERIGO: pode criar roles, alterar configuracoes, dar acesso a outros?">&#x1F511; Alterar<br>Permissoes</th><th style="min-width:130px;text-align:center" title="Pode aceder a dados brutos, data lake Sentinel, retencao?">&#x1F4BE; Aceder<br>a Dados</th></tr></thead><tbody>
 $tblPermMatrix
 </tbody></table></div></div></div>
 
 <!-- S3: RISK ANALYSIS -->
 <div class="sc"><div class="st" style="background:#2d1a1a">&#x26A0;&#xFE0F; 3. Quem tem acesso demais? -- Analise de Risco<a href="$($portal.PIM)" target="_blank">PIM &#x2192;</a></div><div class="sb">
-<div class="rt" style="padding:8px 14px"><span style="color:#f85149">&#x1F534; CRITICAL</span> = acesso total irrestrito | <span style="color:#ff7b72">&#x1F7E0; HIGH</span> = manage secops | <span style="color:#d29922">&#x1F7E1; MEDIUM</span> = manage posture/config | <span style="color:#3fb950">&#x1F7E2; LOW</span> = read-only</div>
+<div class="rt" style="padding:8px 14px"><span style="color:#f85149">&#x1F534; CRITICAL</span> = pode fazer tudo no XDR | <span style="color:#ff7b72">&#x1F7E0; HIGH</span> = pode responder a incidentes | <span style="color:#d29922">&#x1F7E1; MEDIUM</span> = pode alterar configuracoes | <span style="color:#3fb950">&#x1F7E2; LOW</span> = so consegue visualizar</div>
 <div style="overflow-x:auto"><table style="min-width:900px"><thead><tr><th style="min-width:180px">Principal</th><th style="min-width:100px">Risco</th><th style="min-width:120px">Score</th><th style="min-width:70px;text-align:center">Caminhos</th><th style="min-width:200px">Roles</th><th style="min-width:180px">Acao Recomendada</th></tr></thead><tbody>
 $tblRisk
 </tbody></table></div></div></div>
@@ -954,12 +963,12 @@ $tblRecs
 </tbody></table>
 </div>
 </div>
-<h4 style="color:#6e7681;font-size:11px;margin:14px 0 6px">Categorias de Permissao do Unified RBAC (Referencia)</h4>
-<table><thead><tr><th>Categoria</th><th>Permissoes Incluidas</th><th>Descricao</th></tr></thead><tbody>
-<tr><td style="color:#f85149;font-weight:600">&#x1F6E1;&#xFE0F; Security Operations</td><td class="sm">Security data basics, Alerts, Response, Live response (basic/advanced), File collection, Email quarantine, Email advanced actions</td><td>Operacoes SOC: view/manage incidents, alerts, investigations, response actions, advanced hunting, live response, email quarantine</td></tr>
-<tr><td style="color:#d29922;font-weight:600">&#x1F4CA; Security Posture</td><td class="sm">Vulnerability management, Exception handling, Remediation handling, Application handling, Security baseline assessment, Exposure Management</td><td>Gestao de postura: TVM, baselines, Secure Score, exposure management, remediation tickets</td></tr>
-<tr><td style="color:#58a6ff;font-weight:600">&#x2699;&#xFE0F; Authorization &amp; Settings</td><td class="sm">Authorization, Core security settings, Detection tuning, System settings</td><td>Configuracao: criar/editar roles, configurar deteccoes, definicoes do portal, alert tuning</td></tr>
-<tr><td style="color:#3fb950;font-weight:600">&#x1F4BE; Data Operations</td><td class="sm">Data, Analytics Jobs Schedule</td><td>Dados: retencao, tiers, tabelas do Sentinel data lake, connectors, analytics jobs (Preview)</td></tr>
+<h4 style="color:#6e7681;font-size:11px;margin:14px 0 6px">As 4 capacidades do Unified RBAC (Mapeamento)</h4>
+<table><thead><tr><th>No Report</th><th>Nome Microsoft (API)</th><th>O que controla na pratica</th><th>Risco se MANAGE</th></tr></thead><tbody>
+<tr><td style="color:#f85149;font-weight:600">&#x1F6A8; Responder a Incidentes</td><td class="sm">Security Operations (secops)</td><td>Ver alertas, investigar incidents, executar response actions, live response em devices, quarentena de email, advanced hunting</td><td style="color:#f85149">ALTO -- pode isolar devices, apagar emails, executar scripts remotos</td></tr>
+<tr><td style="color:#d29922;font-weight:600">&#x1F50D; Gerir Vulnerabilidades</td><td class="sm">Security Posture (securityposture)</td><td>Ver e tratar vulnerabilidades (TVM), baselines de seguranca, Secure Score, exposure management, remediation tickets</td><td style="color:#d29922">MEDIO -- pode alterar prioridades de remediacao e baselines</td></tr>
+<tr><td style="color:#58a6ff;font-weight:600">&#x1F511; Alterar Permissoes</td><td class="sm">Authorization &amp; Settings (authorization)</td><td>Criar/editar roles RBAC, configurar detection rules, alterar settings do portal, alert tuning</td><td style="color:#f85149">CRITICO -- pode dar acesso total a si proprio ou a outros</td></tr>
+<tr><td style="color:#3fb950;font-weight:600">&#x1F4BE; Aceder a Dados</td><td class="sm">Data Operations (dataops)</td><td>Gerir retencao de dados, mover/apagar dados entre tiers, criar tabelas no Sentinel data lake, gerir connectors e analytics jobs</td><td style="color:#d29922">MEDIO -- pode apagar dados ou alterar retencao</td></tr>
 </tbody></table>
 </div></div>
 
