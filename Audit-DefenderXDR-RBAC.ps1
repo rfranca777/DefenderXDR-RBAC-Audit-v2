@@ -23,7 +23,7 @@ param(
     [int]$DaysBack = 30
 )
 $ErrorActionPreference = "Stop"
-$scriptVersion = "2.6.0"
+$scriptVersion = "2.7.0"
 
 # =====================================================================
 # FUNCOES AUXILIARES
@@ -897,8 +897,8 @@ tr:hover{background:#1c2128}
 
 <!-- HEADER -->
 <div class="hd">
-<h1>&#x1F6E1;&#xFE0F; Defender XDR - RBAC Audit Report v2.0</h1>
-<p>Auditoria estado-da-arte de permissoes, custom roles, categorias, risco e eventos do Unified RBAC</p>
+<h1>&#x1F6E1;&#xFE0F; Defender XDR - RBAC Audit Report</h1>
+<p>Visibilidade completa de quem tem acesso ao Microsoft Defender XDR, que capacidades possui, e o que mudou. Complementa as ferramentas nativas do portal -- nao as substitui.</p>
 <div class="mt">
 <span>&#x1F4C5; $ts</span><span>&#x1F464; $($ctx.Account)</span><span>&#x1F3E2; $tmask</span><span>&#x1F4CA; $DaysBack dias</span><span>&#x1F4BB; v$scriptVersion</span>
 <a href="$($portal.Perms)" target="_blank">&#x1F512; Permissions</a>
@@ -945,41 +945,41 @@ $(foreach($w in $wl){"<div style='display:flex;align-items:center;gap:6px'><span
 
 <!-- S1: RBAC CUSTOM ROLES -->
 <div class="sc"><div class="st" style="background:#1a2e1a">&#x1F512; 1. Custom Roles do Defender XDR -- Quem tem acesso ao que?<a href="$($portal.Perms)" target="_blank">Permissions &#x2192;</a></div><div class="sb">
-<div class="rt" style="border-left-color:#3fb950;padding:8px 14px"><b>$($dR.value.Count)</b> custom role(s), <b>$($dGrp.Count)</b> grupo(s), <b>$tRB</b> assignment(s). Roles atribuidas a grupos Entra ID -- membros herdam permissoes. &#x1F517; <a href="$($portal.Perms)" target="_blank">Portal</a> | <a href="https://learn.microsoft.com/defender-xdr/custom-permissions-details" target="_blank">Docs</a></div>
+<div class="rt" style="border-left-color:#3fb950"><b>Fonte:</b> API <code>roleManagement/defender/roleDefinitions</code> + <code>roleAssignments</code> (Graph beta). O Unified RBAC do Defender XDR permite criar roles com permissoes granulares e atribui-las a <b>grupos de seguranca do Entra ID</b>. Qualquer membro do grupo herda automaticamente as permissoes -- adicionar alguem ao grupo e dar-lhe acesso ao XDR. O escopo <code>appScopeIds: [&quot;/&quot;]</code> significa acesso a <b>todos os workloads</b>. Escopos especificos limitam a MDE, MDO, MDI ou MDCA individualmente.<br><b>Achados:</b> <b>$($dR.value.Count)</b> custom role(s), <b>$($dGrp.Count)</b> grupo(s), <b>$tRB</b> assignment(s). &#x1F517; <a href="$($portal.Perms)" target="_blank">Portal</a> | <a href="https://learn.microsoft.com/defender-xdr/custom-permissions-details" target="_blank">Docs</a></div>
 <div style="overflow-x:auto"><table style="min-width:950px"><thead><tr><th style="min-width:140px">Custom Role</th><th style="min-width:220px">Permissoes</th><th style="min-width:200px">Atribuida a</th><th style="min-width:150px">Escopo</th><th style="min-width:220px">Membros (acesso efetivo)</th></tr></thead><tbody>
 $tblRbac
 </tbody></table></div></div></div>
 
 <!-- S2: PERMISSION CATEGORIES MATRIX -->
 <div class="sc"><div class="st">&#x1F4CB; 2. Quem pode fazer o que? -- Capacidades por Role<a href="https://learn.microsoft.com/defender-xdr/custom-permissions-details" target="_blank">Docs &#x2192;</a></div><div class="sb">
-<div class="rt" style="padding:8px 14px"><span style="color:#f85149">&#x1F534; CONTROLE TOTAL</span> = pode ver, agir e modificar | <span style="color:#3fb950">&#x1F7E2; SO VISUALIZA</span> = somente leitura | &#x2716; = sem acesso. Workloads: <span style='color:#4fc3f7'>&#x25CF;</span>MDE <span style='color:#81c784'>&#x25CF;</span>MDO <span style='color:#ffb74d'>&#x25CF;</span>MDI <span style='color:#ce93d8'>&#x25CF;</span>MDCA</div>
+<div class="rt"><b>Racional:</b> O Defender XDR organiza permissoes em <b>4 capacidades</b>, cada uma controlando areas distintas do portal. Esta matriz cruza cada role (RBAC custom + Entra ID) com essas capacidades, mostrando exatamente <b>o que cada role permite fazer</b>. As Entra ID Roles (Global Admin, Security Admin, etc.) sao mapeadas conforme a <a href="https://learn.microsoft.com/defender-xdr/compare-rbac-roles" target="_blank">documentacao oficial de equivalencia</a>. Os <b>dots de workload</b> mostram quais produtos da suite Defender estao cobertos pela role.<br><span style="color:#f85149">&#x1F534; CONTROLE TOTAL</span> = <code>allowedResourceActions</code> com <code>*/manage</code> | <span style="color:#3fb950">&#x1F7E2; SO VISUALIZA</span> = <code>*/read</code> | &#x2716; = sem <code>allowedResourceActions</code> para esta categoria.<br><b>Workloads:</b> <span style='color:#4fc3f7'>&#x25CF;</span>MDE (Endpoint) <span style='color:#81c784'>&#x25CF;</span>MDO (Office 365) <span style='color:#ffb74d'>&#x25CF;</span>MDI (Identity) <span style='color:#ce93d8'>&#x25CF;</span>MDCA (Cloud Apps)</div>
 <div style="overflow-x:auto"><table style="min-width:900px"><thead><tr><th style="min-width:220px">Role <span style='font-weight:400;color:#6e7681'>(membros)</span></th><th style="min-width:80px;text-align:center" title="Workloads cobertos: MDE, MDO, MDI, MDCA">Workloads</th><th style="min-width:120px;text-align:center" title="Pode responder a alertas, investigar incidents, executar acoes de resposta?">&#x1F6A8; Responder a<br>Incidentes</th><th style="min-width:120px;text-align:center" title="Pode ver e corrigir vulnerabilidades, Secure Score, baselines?">&#x1F50D; Gerir<br>Vulnerabilidades</th><th style="min-width:120px;text-align:center" title="PERIGO: pode criar roles, alterar configuracoes, dar acesso a outros?">&#x1F511; Alterar<br>Permissoes</th><th style="min-width:120px;text-align:center" title="Pode aceder a dados brutos, data lake Sentinel, retencao?">&#x1F4BE; Aceder<br>a Dados</th></tr></thead><tbody>
 $tblPermMatrix
 </tbody></table></div></div></div>
 
 <!-- S3: RISK ANALYSIS -->
 <div class="sc"><div class="st" style="background:#2d1a1a">&#x26A0;&#xFE0F; 3. Quem tem acesso demais? -- Analise de Risco<a href="$($portal.PIM)" target="_blank">PIM &#x2192;</a></div><div class="sb">
-<div class="rt" style="padding:8px 14px"><span style="color:#f85149">&#x1F534; CRITICAL</span> = pode fazer tudo no XDR | <span style="color:#ff7b72">&#x1F7E0; HIGH</span> = pode responder a incidentes | <span style="color:#d29922">&#x1F7E1; MEDIUM</span> = pode alterar configuracoes | <span style="color:#3fb950">&#x1F7E2; LOW</span> = so consegue visualizar</div>
+<div class="rt"><b>Metodologia de risco:</b> Cada principal recebe o score da <b>role de maior privilegio</b> que possui (pior caso). O score combina o tipo de role com o nivel de acesso: Global Admin = 100, Security Admin = 80, Operator = 50, Reader = 20. Principals com <b>multiplos caminhos de acesso</b> (ex: Entra Role + grupo RBAC) dificultam revogacao -- se remover um caminho, o outro mantem o acesso. A coluna <b>Acao Recomendada</b> sugere o proximo passo concreto para cada principal, baseado em <a href="https://learn.microsoft.com/entra/identity/role-based-access-control/security-planning" target="_blank">Microsoft Privileged Access Roadmap</a>.<br><span style="color:#f85149">&#x1F534; CRITICAL (100)</span> = Global/Security Admin -- pode fazer tudo | <span style="color:#ff7b72">&#x1F7E0; HIGH (80)</span> = Operator, manage secops | <span style="color:#d29922">&#x1F7E1; MEDIUM (50)</span> = manage config/posture | <span style="color:#3fb950">&#x1F7E2; LOW (20)</span> = somente leitura</div>
 <div style="overflow-x:auto"><table style="min-width:900px"><thead><tr><th style="min-width:180px">Principal</th><th style="min-width:100px">Risco</th><th style="min-width:120px">Score</th><th style="min-width:70px;text-align:center">Caminhos</th><th style="min-width:200px">Roles</th><th style="min-width:180px">Acao Recomendada</th></tr></thead><tbody>
 $tblRisk
 </tbody></table></div></div></div>
 
 <!-- S4: EVIDENCE -->
 <div class="sc"><div class="st" style="background:#2d1a1a">&#x1F6A8; 4. O que mudou no acesso ao XDR?<a href="$($portal.Audit)" target="_blank">Audit Log &#x2192;</a></div><div class="sb">
-<div class="rt" style="padding:8px 14px"><b>$totalRbacChanges</b> alteracao(es) que afetam o <b>acesso ao Defender XDR</b> nos ultimos $DaysBack dias. So mostra: Entra Roles de seguranca, custom roles RBAC, e grupos do RBAC.$(if($totalRbacChanges -eq 0){" &#x2705; Nenhuma alteracao -- estabilidade confirmada."})</div>
+<div class="rt"><b>Fonte:</b> <code>CloudAppEvents</code> via Advanced Hunting (KQL). Mostra <b>exclusivamente</b> alteracoes que afetam o acesso ao Defender XDR: (1) atribuicao/remocao de Entra Roles de seguranca (<code>$($secRoles -join ', ')</code>), (2) criacao/edicao/exclusao de custom roles RBAC (<code>AddRole</code>, <code>EditRole</code>, <code>DeleteRole</code>), (3) alteracoes de membership nos grupos atribuidos ao RBAC$(if($dGrp.Count -gt 0){" (<b>$($dGrp -join ', ')</b>)"}). Eventos de roles irrelevantes para o XDR (Teams Admin, Exchange Admin, etc.) sao filtrados. O <b>impacto</b> e classificado pela role afetada: Global Admin = CRITICO.<br><b>$totalRbacChanges</b> alteracao(es) nos ultimos $DaysBack dias.$(if($totalRbacChanges -eq 0){" &#x2705; Nenhuma alteracao -- estabilidade confirmada."})</div>
 $(if($tblEvidence){"<div style='overflow-x:auto'><table style='min-width:1000px'><thead><tr><th style='min-width:120px'>Quando</th><th style='min-width:75px'>Impacto</th><th style='min-width:90px'>Tipo</th><th style='min-width:130px'>Quem fez</th><th style='min-width:300px'>O que aconteceu</th><th style='min-width:110px'>IP / Pais</th><th style='min-width:100px'>Origem</th></tr></thead><tbody>$tblEvidence</tbody></table></div>"}else{"<div style='background:#0d1117;border:1px solid #3fb95040;border-radius:8px;padding:20px;text-align:center'><span style='color:#3fb950;font-size:20px'>&#x2705;</span><br><br><span style='color:#c9d1d9;font-size:13px'>Nenhuma alteracao de acesso ao Defender XDR nos ultimos $DaysBack dias.</span><br><span style='color:#6e7681;font-size:11px'>Entra Roles de seguranca, custom roles RBAC e grupos RBAC estao estaveis.</span><br><br><a href='$($portal.Audit)' target='_blank' style='color:#58a6ff;font-size:11px'>Verificar manualmente no Audit Log &#x2192;</a></div>"})
 </div></div>
 
 <!-- S5: ACCESS PATHS -->
 <div class="sc"><div class="st">&#x1F511; 5. Todos os caminhos de acesso ao XDR<a href="$($portal.Entra)" target="_blank">Entra ID &#x2192;</a></div><div class="sb">
-<div class="rt" style="padding:8px 14px"><b>$uniquePrincipals</b> principals, <b>$($accessPaths.Count)</b> caminhos. $nU users, $nG groups, $nS SPs.$(if($nS -gt 2){" &#x26A0;&#xFE0F; <b>$nS SPs privilegiados!</b>"}) Entra Roles + RBAC combinados. <a href="$($portal.Entra)" target="_blank">Entra</a> | <a href="$($portal.Perms)" target="_blank">RBAC</a></div>
+<div class="rt"><b>Modelo de acesso:</b> O Defender XDR aceita acesso de <b>duas fontes independentes</b>: (1) <b>Entra ID Roles</b> -- roles globais como Security Administrator dao acesso total ao portal mesmo sem RBAC configurado; (2) <b>Unified RBAC</b> -- custom roles com escopo granular por workload. Um principal pode ter <b>multiplos caminhos</b>: role direta + membership em grupo RBAC. A tabela consolida todos os caminhos, com link direto ao portal para cada um.<br><b>Achados:</b> <b>$uniquePrincipals</b> principals, <b>$($accessPaths.Count)</b> caminhos. $nU users, $nG groups, $nS SPs.$(if($nS -gt 2){" &#x26A0;&#xFE0F; <b>$nS SPs privilegiados -- validar credenciais!</b>"}) <a href="$($portal.Entra)" target="_blank">Entra</a> | <a href="$($portal.Perms)" target="_blank">RBAC</a></div>
 <div style="max-height:500px;overflow:auto"><table style="min-width:850px"><thead><tr><th style="min-width:200px">Principal</th><th style="min-width:110px">Tipo</th><th style="min-width:110px">Risco</th><th style="min-width:200px">Role / RBAC</th><th style="min-width:200px">Caminho</th></tr></thead><tbody>
 $tblAccess
 </tbody></table></div></div></div>
 
 <!-- S6: ARCHITECTURE SVG -->
 <div class="sc"><div class="st">&#x1F5FA;&#xFE0F; 6. Arquitetura de Acesso RBAC<a href="$($portal.Perms)" target="_blank">Portal &#x2192;</a></div><div class="sb">
-<div class="rt" style="padding:6px 14px;font-size:10px">Workloads &#x2192; XDR &#x2192; Roles/Grupos. <span style="color:#f85149">&#x25CF;</span> CRITICAL <span style="color:#3fb950">&#x25CF;</span> RBAC Group. Hover para detalhes.</div>
+<div class="rt" style="font-size:10px"><b>Arquitetura:</b> O Defender XDR (centro) e o portal unificado que protege 4 workloads (esquerda): MDE (endpoints), MDO (email), MDI (identidades AD), MDCA (cloud apps). O acesso e controlado pelas roles e grupos a direita. Cada ligacao tracejada representa um fluxo de permissao. O badge numerico mostra quantos principals estao atribuidos. <span style="color:#f85149">&#x25CF;</span> = CRITICAL <span style="color:#3fb950">&#x25CF;</span> = Grupo RBAC. <b>Passe o mouse sobre qualquer elemento</b> para ver membros, permissoes e escopo.</div>
 <svg viewBox="0 0 505 $svgH1" xmlns="http://www.w3.org/2000/svg" style="width:100%;background:#0d1117;border-radius:8px;border:1px solid #21262d">
 <text x='68' y='42' fill='#6e7681' font-family='Segoe UI' font-size='6.5' text-anchor='middle' font-weight='600'>WORKLOADS</text>
 <text x='242' y='42' fill='#58a6ff' font-family='Segoe UI' font-size='6.5' text-anchor='middle' font-weight='600'>PORTAL</text>
@@ -989,7 +989,7 @@ $svg1
 
 <!-- S7: EVENTS -->
 <div class="sc"><div class="st">&#x1F50D; 7. Todos os eventos -- Timeline completa ($DaysBack dias)<a href="$($portal.Hunt)" target="_blank">Hunting &#x2192;</a></div><div class="sb">
-<div class="rt" style="padding:6px 14px;font-size:10px"><b>$($evFiltered.Count)</b> eventos relevantes ($(if($evNoise -gt 0){"$evNoise automacao MDE filtrada"}else{"sem ruido"})). Borda <span style="color:#f85149">&#x25CF;</span> = role/RBAC | <span style="color:#d29922">&#x25CF;</span> = grupo.</div>
+<div class="rt" style="font-size:10px"><b>Fonte:</b> Query KQL combinando 4 tabelas: <code>CloudAppEvents</code> (Entra Roles + grupos cloud), <code>IdentityDirectoryEvents</code> (AD on-prem via MDI), e acoes RBAC. Filtro de automacao remove eventos de service accounts MDE (<code>aa-mde-*</code>) que alteram device groups automaticamente. <b>$($evFiltered.Count)</b> eventos relevantes$(if($evNoise -gt 0){" ($evNoise automacao filtrada)"}). Borda <span style="color:#f85149">&#x25CF;</span> = alto impacto (role/RBAC) | <span style="color:#d29922">&#x25CF;</span> = grupo. Esta tabela e o <b>contexto amplo</b> -- para evidencias focadas no XDR, ver secao 4.</div>
 $(if($tblEv){"<div style='max-height:420px;overflow:auto'><table style='min-width:1000px'><thead><tr><th style='min-width:130px'>Timestamp</th><th style='min-width:120px'>Cenario</th><th style='min-width:160px'>Acao</th><th style='min-width:140px'>Quem Fez</th><th style='min-width:220px'>Detalhe</th><th style='min-width:120px'>Alvo</th><th style='min-width:130px'>IP / Pais</th></tr></thead><tbody>$tblEv</tbody></table></div>"}else{"<p style='color:#6e7681'>Nenhum evento nos ultimos $DaysBack dias.</p>"})
 </div></div>
 
@@ -1011,7 +1011,7 @@ $(if($tblEv){"<div style='max-height:420px;overflow:auto'><table style='min-widt
 
 <!-- S9: DETECTION RULE -->
 <div class="sc"><div class="st" style="background:#1a2e2e">&#x1F6A8; 9. Como automatizar? -- Detection Rule para o SOC</div><div class="sb">
-<div class="rt" style="padding:8px 14px">Query para <b>alerta automatico</b> no SOC.$(if($dGrp.Count -gt 0){" Grupos: <b>$($dGrp -join ', ')</b>."}) Crie a Detection Rule abaixo.</div>
+<div class="rt"><b>Proposito:</b> Transformar esta auditoria pontual em <b>monitoramento continuo</b>. A Detection Rule executa a query KQL a cada hora e cria um <b>incidente na fila do Defender XDR</b> quando alguem alterar permissoes. O SOC recebe o alerta como qualquer outro incidente -- investiga, classifica e responde. Isto fecha o ciclo: o script audita o estado atual, a Detection Rule protege o futuro. Categoria sugerida: <code>PrivilegeEscalation</code> (MITRE ATT&CK <a href="https://attack.mitre.org/techniques/T1078/" target="_blank" style="color:#58a6ff">T1078 - Valid Accounts</a>).$(if($dGrp.Count -gt 0){" Inclui filtro para grupos RBAC: <b>$($dGrp -join ', ')</b>."})</div>
 <div class="ins"><h3>Passo a passo -- Detection Rule</h3><ol>
 <li>Abrir <a href="$($portal.Hunt)" target="_blank" style="color:#58a6ff">Advanced Hunting</a></li>
 <li>Copiar a query abaixo e colar no editor</li>
@@ -1031,14 +1031,14 @@ $(if($tblEv){"<div style='max-height:420px;overflow:auto'><table style='min-widt
 
 <!-- S10: RECOMMENDATIONS -->
 <div class="sc"><div class="st">&#x1F4DD; 10. O que fazer? -- Recomendacoes CIS / NIST</div><div class="sb">
-<div class="rt" style="padding:8px 14px">Baseadas nos achados reais. Ref: <b>CIS Benchmark</b>, <b>NIST SP 800-53</b>, <b>Microsoft PAR</b>. Links diretos ao portal.</div>
+<div class="rt"><b>Racional:</b> Recomendacoes geradas <b>dinamicamente</b> com base nos achados reais desta auditoria -- nao sao genericas. Cada recomendacao mapeia para um controle especifico: <a href="https://www.cisecurity.org/benchmark/microsoft_365" target="_blank" style="color:#58a6ff">CIS Benchmark for Microsoft 365</a> (hardening), <a href="https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final" target="_blank" style="color:#58a6ff">NIST SP 800-53</a> (controles de acesso), e <a href="https://learn.microsoft.com/entra/identity/role-based-access-control/security-planning" target="_blank" style="color:#58a6ff">Microsoft Privileged Access Roadmap</a> (PAR). O link em cada recomendacao abre a pagina exata do portal onde a acao deve ser executada.</div>
 <div style="overflow-x:auto"><table style="min-width:900px"><thead><tr><th style="min-width:80px">Severidade</th><th style="min-width:100px">Categoria</th><th style="min-width:200px">Achado</th><th style="min-width:280px">Recomendacao</th><th style="min-width:150px">Referencia</th></tr></thead><tbody>
 $tblRecs
 </tbody></table></div></div></div>
 
 <!-- S11: TECHNICAL REFERENCES -->
 <div class="sc"><div class="st">&#x1F4DA; 11. Informacoes Tecnicas</div><div class="sb">
-<div class="rt" style="padding:8px 14px"><code>roleManagement/defender</code> (beta) + <code>roleManagement/directory</code> (v1.0) + <code>runHuntingQuery</code> (v1.0). <b>Somente leitura</b>.</div>
+<div class="rt"><b>Fluxo do script:</b> (1) Autentica via <code>Connect-MgGraph</code> com device code flow -- funciona em qualquer terminal incluindo Azure Cloud Shell. (2) Deteta workloads ativos executando <code>| take 1</code> em cada tabela KQL (DeviceInfo, EmailEvents, etc.). (3) Le roles via <code>roleManagement/directory</code> (Graph v1.0) e custom RBAC via <code>roleManagement/defender</code> (Graph beta). (4) Resolve cada <code>principalId</code> para nome/tipo via <code>directoryObjects</code>. (5) Executa 4 queries KQL no Advanced Hunting via <code>runHuntingQuery</code> (v1.0). Todas as operacoes sao <b>somente leitura</b> -- o script nao modifica nenhuma configuracao.</div>
 <div class="gr">
 <div>
 <h4 style="color:#6e7681;font-size:11px;margin-bottom:6px">Permissoes do Script</h4>
@@ -1072,9 +1072,9 @@ $tblRecs
 
 <!-- FOOTER -->
 <div class="ft">
-<div class="brand">&#x1F6E1;&#xFE0F; <a href="https://github.com/rfranca777/DefenderXDR-RBAC-Audit-v2" target="_blank">Defender XDR RBAC Audit v2.0</a></div>
+<div class="brand">&#x1F6E1;&#xFE0F; <a href="https://github.com/rfranca777/DefenderXDR-RBAC-Audit-v2" target="_blank">Defender XDR RBAC Audit</a></div>
 <div class="brand" style="font-size:12px">Desenvolvido por <a href="https://github.com/rfranca777" target="_blank">Rafael Franca</a> | <a href="https://github.com/odefender" target="_blank">ODEFENDER</a></div>
-<div class="sub">Ferramenta open-source para auditoria estado-da-arte de RBAC do Microsoft Defender XDR<br>MIT License | Gerado em $ts | PowerShell $($PSVersionTable.PSVersion) | Script v$scriptVersion</div>
+<div class="sub">Ferramenta open-source que complementa o Microsoft Defender XDR, dando visibilidade sobre quem tem acesso, que capacidades possui, e o que mudou. Nao substitui o portal -- agrega valor com analise de risco, recomendacoes CIS/NIST e Detection Rule pronta para o SOC.<br>MIT License | Gerado em $ts | PowerShell $($PSVersionTable.PSVersion) | Script v$scriptVersion</div>
 </div>
 
 </div></body></html>
