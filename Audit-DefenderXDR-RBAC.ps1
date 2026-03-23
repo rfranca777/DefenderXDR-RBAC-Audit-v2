@@ -23,7 +23,7 @@ param(
     [int]$DaysBack = 30
 )
 $ErrorActionPreference = "Stop"
-$scriptVersion = "3.0.0"
+$scriptVersion = "3.1.0"
 
 # =====================================================================
 # FUNCOES AUXILIARES
@@ -357,12 +357,12 @@ Write-OK "Risco: $critCount CRITICAL, $highCount HIGH, $medCount MEDIUM, $lowCou
 # =====================================================================
 # 8. EVIDENCIAS DE ALTERACAO RBAC (KQL melhorado)
 # =====================================================================
-Write-Step "Coletando evidencias de alteracoes RBAC..."
-# Roles que afetam o XDR (para filtrar)
+Write-Step "Coletando evidencias de alteracoes de acesso..."
+# Buscar TODAS as alteracoes de roles (nao so secRoles) para visibilidade completa
 $secRolesKQL = ($secRoles | ForEach-Object { "`"$_`"" }) -join ","
-$rbacChanges = @()
+$allRoleChanges = @()
 try {
-    $rbacChanges = Invoke-KQL @"
+    $allRoleChanges = Invoke-KQL @"
 CloudAppEvents
 | where ActionType in ("Add member to role.", "Remove member from role.", "Add eligible member to role.", "Remove eligible member from role.")
 | extend Props = parse_json(tostring(RawEventData.ModifiedProperties))
@@ -373,17 +373,26 @@ CloudAppEvents
     tostring(parse_json(tostring(Props[0])).OldValue),
     tostring(RawEventData.Target[0].ID),
     "")
-| where RoleName has_any ($secRolesKQL) or RoleName == ""
 | extend TargetName = coalesce(tostring(RawEventData.Target[3].ID), tostring(RawEventData.ObjectId), "")
 | extend TargetType = coalesce(tostring(RawEventData.Target[2].ID), "")
 | extend ClientIP = coalesce(IPAddress, "")
 | extend Pais = coalesce(CountryCode, "")
 | extend UserAg = coalesce(tostring(RawEventData.ExtendedProperties[0].Value), UserAgent, "")
-| project Timestamp, ActionType, QuemFez=AccountDisplayName, RoleName, TargetName, TargetType, IP=ClientIP, Country=Pais, UA=UserAg, Tipo="Role XDR"
+| project Timestamp, ActionType, QuemFez=AccountDisplayName, RoleName, TargetName, TargetType, IP=ClientIP, Country=Pais, UA=UserAg
 | sort by Timestamp desc
 "@
-    Write-OK "Alteracoes de Entra Roles XDR: $($rbacChanges.Count)"
+    Write-OK "Total alteracoes de roles: $($allRoleChanges.Count)"
 } catch { Write-Warn "Erro: $($_.Exception.Message)" }
+
+# Classificar: XDR-relevante ou nao
+$rbacChanges = @(); $otherRoleChanges = @()
+foreach ($evt in $allRoleChanges) {
+    $isXDR = $false
+    foreach ($sr in $secRoles) { if ($evt.RoleName -match [regex]::Escape($sr)) { $isXDR = $true; break } }
+    if ($evt.RoleName -eq "") { $isXDR = $true } # RoleName vazio = potencialmente XDR
+    if ($isXDR) { $rbacChanges += $evt } else { $otherRoleChanges += $evt }
+}
+Write-OK "XDR-relevantes: $($rbacChanges.Count) | Outras roles: $($otherRoleChanges.Count)"
 
 # Custom RBAC role changes (AddRole, EditRole, DeleteRole)
 $rbacCustomChanges = @()
@@ -395,7 +404,7 @@ CloudAppEvents
 | extend ClientIP = coalesce(IPAddress, "")
 | extend Pais = coalesce(CountryCode, "")
 | extend UserAg = coalesce(tostring(RawEventData.ExtendedProperties[0].Value), UserAgent, "")
-| project Timestamp, ActionType, QuemFez=AccountDisplayName, RoleName, TargetName="", TargetType="", IP=ClientIP, Country=Pais, UA=UserAg, Tipo="Custom RBAC"
+| project Timestamp, ActionType, QuemFez=AccountDisplayName, RoleName, TargetName="", TargetType="", IP=ClientIP, Country=Pais, UA=UserAg
 | sort by Timestamp desc
 "@
     Write-OK "Alteracoes de Custom RBAC: $($rbacCustomChanges.Count)"
@@ -410,7 +419,8 @@ if ($dGrp.Count -gt 0) {
     } catch { Write-Warn "Erro grupos RBAC" }
 }
 $totalRbacChanges = $rbacChanges.Count + $rbacCustomChanges.Count + $rbacGroupChanges.Count
-Write-OK "Total evidencias XDR-relevantes: $totalRbacChanges"
+$totalAllChanges = $totalRbacChanges + $otherRoleChanges.Count
+Write-OK "Total: $totalAllChanges ($totalRbacChanges XDR + $($otherRoleChanges.Count) outras)"
 
 # =====================================================================
 # 9. KQL QUERIES (melhoradas - extracao de Detalhe e IP)
@@ -685,6 +695,24 @@ foreach ($gc in $rbacGroupChanges) {
     $narrative = if ($gc.ActionType -match "Add") { "Adicionou <b>$tgtSafe</b> ao grupo RBAC <span style='color:#3fb950;font-weight:700'>$grpSafe</span>" } else { "Removeu <b>$tgtSafe</b> do grupo RBAC <span style='color:#f85149;font-weight:700'>$grpSafe</span>" }
     $tipoEvt = "<span class='badge' style='background:#d2992215;color:#d29922'>Grupo RBAC</span>"
     $tblEvidence += "<tr style='border-left:3px solid $actionColor'><td class='mono'>$ts2</td><td><span class='badge' style='background:#d2992222;color:#d29922'>ALTO</span></td><td>$tipoEvt</td><td><b>$($gc.QuemFez)</b></td><td style='font-size:11px;line-height:1.5'>$narrative</td><td class='mono'>$ipDisplay$countryDisplay</td><td class='sm'>-</td></tr>`n"
+}
+# 4) Other role changes (non-XDR) — shown dimmed for context
+foreach ($rc in $otherRoleChanges) {
+    $actionColor = if ($rc.ActionType -match "Add") { "#3fb950" } elseif ($rc.ActionType -match "Remove") { "#f85149" } else { "#d29922" }
+    $ts2 = ([datetime]$rc.Timestamp).ToString("yyyy-MM-dd HH:mm")
+    $ipDisplay = if ($rc.IP) { $rc.IP } else { "-" }
+    $countryDisplay = if ($rc.Country) { " ($($rc.Country))" } else { "" }
+    $roleSafe = if ($rc.RoleName) { $rc.RoleName -replace '"','' -replace '\[|\]','' } else { "(nao identificada)" }
+    $targetSafe = if ($rc.TargetName) { $rc.TargetName } else { "(desconhecido)" }
+    $narrative = switch -Wildcard ($rc.ActionType) {
+        "Add member to role*" { "Atribuiu <span style='color:#8b949e'>$roleSafe</span> a <b>$targetSafe</b>" }
+        "Remove member from role*" { "Removeu <b>$targetSafe</b> de <span style='color:#8b949e'>$roleSafe</span>" }
+        "Add eligible*" { "Ativou elegibilidade PIM de <b>$targetSafe</b> para <span style='color:#8b949e'>$roleSafe</span>" }
+        "Remove eligible*" { "Desativou elegibilidade PIM de <b>$targetSafe</b> para <span style='color:#8b949e'>$roleSafe</span>" }
+        default { "$($rc.ActionType) em $targetSafe" }
+    }
+    $uaShort = if ($rc.UA -and $rc.UA.Length -gt 3) { ($rc.UA -replace '\{|\}|"','').Substring(0, [Math]::Min(35, ($rc.UA -replace '\{|\}|"','').Length)) } else { "-" }
+    $tblEvidence += "<tr style='border-left:3px solid #30363d;opacity:.6'><td class='mono'>$ts2</td><td><span class='badge' style='background:#30363d;color:#6e7681'>Outra role</span></td><td><span class='badge' style='background:#30363d33;color:#6e7681'>Entra ID</span></td><td>$($rc.QuemFez)</td><td style='font-size:11px;line-height:1.5;color:#6e7681'>$narrative</td><td class='mono'>$ipDisplay$countryDisplay</td><td class='sm' title='$(HtmlEncode $rc.UA)'>$uaShort</td></tr>`n"
 }
 
 # -- Tabela S5: Entra ID Roles / Caminhos de Acesso (com links clicaveis)
@@ -977,7 +1005,7 @@ tr:hover{background:#1c2128}
 <div class="cd c4"><div class="n">$critCount</div><div class="l">Principals<br>Risco CRITICAL</div></div>
 <div class="cd c2"><div class="n">$uniquePrincipals</div><div class="l">Pessoas/SPs<br>com acesso ao XDR</div></div>
 <div class="cd c1"><div class="n">$($dR.value.Count)</div><div class="l">Custom Roles<br>Unified RBAC</div></div>
-<div class="cd c3"><div class="n">$totalRbacChanges</div><div class="l">Alteracoes RBAC<br>($DaysBack dias)</div></div>
+<div class="cd c3"><div class="n">$totalAllChanges</div><div class="l">Alteracoes<br>($DaysBack dias)</div></div>
 <div class="cd c5"><div class="n">$aWL<span style='font-size:14px;color:#6e7681'>/4</span></div><div class="l">Workloads<br>Ativos</div></div>
 <div class="cd c6"><div class="n">$($recommendations.Count)</div><div class="l">Recomendacoes<br>CIS/NIST</div></div>
 </div>
@@ -1039,8 +1067,8 @@ $tblRisk
 </tbody></table></div></div></div>
 
 <!-- S4: EVIDENCE -->
-<div class="sc"><div class="st" style="background:#2d1a1a">&#x1F6A8; 4. O que mudou no acesso ao XDR?<a href="$($portal.Audit)" target="_blank">Audit Log &#x2192;</a></div><div class="sb">
-<div class="rt"><b>Fonte:</b> <code>CloudAppEvents</code> via Advanced Hunting (KQL). Mostra <b>exclusivamente</b> alteracoes que afetam o acesso ao Defender XDR: (1) atribuicao/remocao de Entra Roles de seguranca (<code>$($secRoles -join ', ')</code>), (2) criacao/edicao/exclusao de custom roles RBAC (<code>AddRole</code>, <code>EditRole</code>, <code>DeleteRole</code>), (3) alteracoes de membership nos grupos atribuidos ao RBAC$(if($dGrp.Count -gt 0){" (<b>$($dGrp -join ', ')</b>)"}). Eventos de roles irrelevantes para o XDR (Teams Admin, Exchange Admin, etc.) sao filtrados. O <b>impacto</b> e classificado pela role afetada: Global Admin = CRITICO.<br><b>$totalRbacChanges</b> alteracao(es) nos ultimos $DaysBack dias.$(if($totalRbacChanges -eq 0){" &#x2705; Nenhuma alteracao -- estabilidade confirmada."})</div>
+<div class="sc"><div class="st" style="background:#2d1a1a">&#x1F6A8; 4. Quem alterou acessos? -- Historico completo<a href="$($portal.Audit)" target="_blank">Audit Log &#x2192;</a></div><div class="sb">
+<div class="rt"><b>$totalAllChanges alteracao(es)</b> nos ultimos $DaysBack dias: <b style='color:#f85149'>$totalRbacChanges afetam o XDR</b> (Entra Roles de seguranca + custom RBAC + grupos RBAC) e <b style='color:#6e7681'>$($otherRoleChanges.Count) outras roles</b> (Teams Admin, Exchange Admin, etc. -- mostradas a cinza para contexto). Fonte: <code>CloudAppEvents</code> via Advanced Hunting.$(if($totalRbacChanges -eq 0 -and $otherRoleChanges.Count -eq 0){" &#x2705; Nenhuma alteracao de acesso nos ultimos $DaysBack dias."})</div>
 $(if($tblEvidence){"<div style='overflow-x:auto'><table style='min-width:1000px'><thead><tr><th style='min-width:120px'>Quando</th><th style='min-width:75px'>Impacto</th><th style='min-width:90px'>Tipo</th><th style='min-width:130px'>Quem fez</th><th style='min-width:300px'>O que aconteceu</th><th style='min-width:110px'>IP / Pais</th><th style='min-width:100px'>Origem</th></tr></thead><tbody>$tblEvidence</tbody></table></div>"}else{"<div style='background:#0d1117;border:1px solid #3fb95040;border-radius:8px;padding:20px;text-align:center'><span style='color:#3fb950;font-size:20px'>&#x2705;</span><br><br><span style='color:#c9d1d9;font-size:13px'>Nenhuma alteracao de acesso ao Defender XDR nos ultimos $DaysBack dias.</span><br><span style='color:#6e7681;font-size:11px'>Entra Roles de seguranca, custom roles RBAC e grupos RBAC estao estaveis.</span><br><br><a href='$($portal.Audit)' target='_blank' style='color:#58a6ff;font-size:11px'>Verificar manualmente no Audit Log &#x2192;</a></div>"})
 </div></div>
 
